@@ -1,0 +1,9 @@
+node_modules
+auth
+sessions
+data
+data_test
+.env
+.git
+*.log
+tests

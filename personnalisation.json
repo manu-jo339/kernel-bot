@@ -1,0 +1,39 @@
+{
+  "_aide": "Modifie les textes ci-dessous à ta guise, puis redémarre le bot (Ctrl+C puis npm start).",
+  "signature": "MWENOBANGUE Labs",
+  "menu": {
+    "titre": "🤖 {NOM_BOT}",
+    "pied": "Tape {PREFIXE}aide <commande> pour les détails.",
+    "afficherDescriptions": true
+  },
+  "emojis": {
+    "categories": {
+      "Général": "🧭",
+      "Groupe": "👥",
+      "Protection": "🛡️",
+      "Propriétaire": "👑"
+    },
+    "reaction": "🪄"
+  },
+  "messages": {
+    "reserveProprietaire": "⛔ Commande réservée au propriétaire du bot.",
+    "reserveGroupe": "👥 Cette commande fonctionne uniquement dans un groupe.",
+    "reserveAdmin": "⛔ Commande réservée aux administrateurs du groupe.",
+    "erreur": "⚠️ Une erreur est survenue pendant l’exécution de la commande."
+  },
+  "chatbot": {
+    "_aide": "Personnalité et messages de l'IA. Variables : {NOM_BOT} {PREFIXE} {JOURS} {LIMITE}. Supprime une ligne pour retrouver le texte par défaut.",
+    "personnalite": "Tu es {NOM_BOT}, un assistant WhatsApp créé par MWENOBANGUE Labs à Brazzaville. Tu réponds en français simple, de façon claire, chaleureuse et courte (WhatsApp). Si on te parle dans une autre langue, tu réponds dans cette langue. Tu ne prétends jamais être humain. Si tu ne sais pas, dis-le honnêtement. Tu n'inventes pas de faits."
+  },
+  "commandesDesactivees": [],
+  "createur": {
+    "_aide": "Contact renvoyé par la commande créateur. Laisse « numero » vide pour utiliser NUMERO_OWNER.",
+    "nom": "Emmanuel TSINGAMBIA",
+    "numero": "242056233409",
+    "pays": "République du Congo",
+    "organisation": "MWENOBANGUE Labs"
+  },
+  "noms": {
+    "_aide": "Renomme une commande : \"ancien\": \"nouveau\". Exemple : \"expulser\": \"virer\". L'ancien nom reste utilisable."
+  }
+}
