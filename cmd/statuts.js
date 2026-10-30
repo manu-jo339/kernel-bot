@@ -40,7 +40,9 @@ async function transferer(ctx, versProprio) {
   const ci = utils.contextInfo(msg);
   if (!ci.quotedMessage) return reply(`📌 Ouvre le statut, réponds-y avec *${config.PREFIXE}${versProprio ? 'sauverstatut' : 'recevoirstatut'}*.`);
   const cle = { remoteJid: 'status@broadcast', id: ci.stanzaId, participant: ci.participant, fromMe: false };
-  const faux = { key: cle, message: ci.quotedMessage };
+  // Le statut d'origine reçu par le bot (avec sa clé de déchiffrement) vaut mieux que la citation, qui en est dépourvue
+  const origine = statuts.retrouver(ci.stanzaId);
+  const faux = origine ? { key: origine.key, message: origine.message } : { key: cle, message: ci.quotedMessage };
   const vers = versProprio ? statuts.jidProprietaire(sock) : jid;
   try {
     const ok = await statuts.envoyerStatut(sock, faux, vers, `📥 Statut de +${utils.numero(ci.participant) || '?'}`);
@@ -48,7 +50,9 @@ async function transferer(ctx, versProprio) {
     if (versProprio && jid !== vers) await reply('✅ Statut enregistré dans ta discussion privée avec moi.');
   } catch (e) {
     console.error('[statut]', e.message);
-    await reply('⚠️ Impossible de récupérer ce statut (il a peut-être expiré après 24 h).');
+    await reply(/media key|not a media message/i.test(String(e.message))
+      ? '⚠️ Je n’ai pas reçu ce statut : je ne peux copier que les statuts publiés *pendant que le bot était connecté* (et pas encore expirés). Réessaie avec un statut plus récent.'
+      : '⚠️ Impossible de récupérer ce statut (il a peut-être expiré après 24 h).');
   }
 }
 

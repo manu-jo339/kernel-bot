@@ -329,6 +329,38 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert(diag.structure([{ name: 'a', aliases: ['b'], desc: 'x', run() {} }, { name: 'b', aliases: [], desc: 'x', run() {} }]).some((p) => /utilisé par/.test(p)));
     } finally { global.fetch = fetchAvant; }
   });
+  await test('yt-dlp : installation automatique sur Render, jamais bloquante ni fatale ; réactions : pas de pause entre deux personnes différentes dans l’essai à vide', async () => {
+    const yt = require('../lib/ytdlp'), diag = require('../lib/diagnostic');
+    const fetchAvant = global.fetch, chemin = process.env.YTDLP_PATH, erreur = console.error;
+    const messages = [];
+    global.fetch = async () => { throw new Error('réseau coupé'); };
+    process.env.YTDLP_PATH = '/chemin/qui/nexiste/pas/yt-dlp';
+    console.error = (...a) => messages.push(a.join(' '));
+    try {
+      assert.strictEqual(await yt.assurer(), null, 'sans réseau : rien d’installé, pas d’exception');
+      assert(messages.some((m) => /Installation automatique de yt-dlp impossible/.test(m)), messages.join('|'));
+      const liste = require('../lib/handler').liste.filter((c) => c.categorie === 'Réactions').slice(0, 4);
+      const res = await diag.essayerTout(liste, { config: require('../config') });
+      assert.strictEqual(res.silence.length, 0, 'chaque réaction répond (même si l’animation est indisponible) : ' + res.silence.map((r) => r.nom));
+    } finally { global.fetch = fetchAvant; console.error = erreur; if (chemin === undefined) delete process.env.YTDLP_PATH; else process.env.YTDLP_PATH = chemin; }
+  });
+  await test('anciens noms OVL : tous mènent à leur commande (ex : antidelete, anticall, levelup)', async () => {
+    const anciens = require('../lib/renommage.json');
+    const manquants = Object.entries(anciens).filter(([ancien, nouveau]) => handler.commands.has(nouveau) && !handler.commands.has(ancien)).map(([a]) => a);
+    assert.deepStrictEqual(manquants, [], 'anciens noms introuvables : ' + manquants.join(', '));
+    assert.strictEqual(handler.commands.get('antidelete'), handler.commands.get('antisuppression'));
+    assert.strictEqual(handler.commands.get('anticall'), handler.commands.get('antiappel'));
+  });
+  await test('save : le statut d’origine gardé en mémoire est utilisé ; sinon message clair', async () => {
+    const statuts = require('../lib/statuts');
+    const STATUT = '242067777777@s.whatsapp.net';
+    const citation = (id) => ({ key: { remoteJid: STATUT, fromMe: true, id: 'ST' + ++n }, message: { extendedTextMessage: { text: '.save', contextInfo: { stanzaId: id, participant: STATUT, remoteJid: 'status@broadcast', quotedMessage: { imageMessage: { mimetype: 'image/jpeg' } } } } }, pushName: 'Moi', messageTimestamp: 1 });
+    statuts.garder({ key: { remoteJid: 'status@broadcast', id: 'STATUT1', participant: STATUT }, message: { imageMessage: { mimetype: 'image/jpeg', mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } });
+    assert(statuts.retrouver('STATUT1') && !statuts.retrouver('JAMAIS'));
+    envoyes.length = 0;
+    await handler.traiter(sock, citation('INCONNU'));
+    assert(/pas reçu ce statut/.test(texteDe(envoyes)) || /Impossible de récupérer/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
+  });
   await test('niveaux : passage de niveau', async () => {
     const niv = require('../lib/niveaux');
     require('../lib/store').set('xp', GRP + '|242063333333', { xp: 49, msgs: 1, dernier: 0 });
