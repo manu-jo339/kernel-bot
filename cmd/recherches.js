@@ -316,20 +316,22 @@ module.exports = [
     ...base,
     name: 'identifier',
     aliases: ['shazam', 'quelmorceau'],
-    desc: 'Reconnaît une chanson à partir d’un extrait audio (service AudD, clé AUDD_API_TOKEN)',
+    desc: 'Reconnaît une chanson à partir d’un extrait audio (service AudD)',
     run: async (ctx) => {
       const { reply } = ctx;
-      if (!process.env.AUDD_API_TOKEN) return reply('⚙️ La reconnaissance musicale demande une clé gratuite du service AudD (audd.io).\nLe propriétaire l’ajoute dans le fichier .env : AUDD_API_TOKEN=…');
+      const jeton = partage.audd();
+      if (!jeton) return reply('⚙️ La reconnaissance musicale n’est pas encore activée sur ce bot.');
       const m = await recuperer(ctx, ['audio', 'video'], `🎵 Cite un extrait de chanson (audio, vocal ou vidéo) avec ${P()}identifier`);
       if (!m) return;
       try {
         const court = await media.convertir({ buffer: m.buffer, ext: media.extDe(m.mime, m.nom) }, (ins, out) => ['-i', ins[0], '-vn', '-t', '20', '-ac', '1', '-ar', '22050', '-b:a', '48k', out], 'mp3', 60000);
         const form = new FormData();
-        form.append('api_token', process.env.AUDD_API_TOKEN);
+        form.append('api_token', jeton);
         form.append('return', 'apple_music,spotify');
         form.append('file', new Blob([court]), 'extrait.mp3');
         const r = await fetch('https://api.audd.io/', { method: 'POST', body: form, signal: AbortSignal.timeout(30000) });
         const j = await r.json();
+        if (j.status === 'error') return reply('⚠️ La reconnaissance musicale est indisponible pour le moment (limite du service atteinte). Réessaie plus tard.');
         const s = j.result;
         if (!s) return reply('❓ Je n’ai pas reconnu ce morceau. Essaie avec un extrait plus long ou plus net.');
         await reply(`🎵 *${s.title}*\n🎤 ${s.artist}\n💿 ${s.album || '—'}${s.release_date ? ' (' + s.release_date.slice(0, 4) + ')' : ''}${s.song_link ? '\n🔗 ' + s.song_link : ''}`);

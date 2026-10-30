@@ -1201,7 +1201,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(/\?\s*$|😂/.test(texteDe(await dire(MEMBRE, '.blague'))) || /👉/.test(texteDe(await dire(MEMBRE, '.blague'))));
     assert(/« .+ »\n— /.test(texteDe(await dire(MEMBRE, '.citation'))));
     delete process.env.AUDD_API_TOKEN; delete process.env.GIPHY_API_KEY;
-    assert(/AUDD_API_TOKEN/.test(texteDe(await dire(MEMBRE, '.identifier'))));
+    assert(/pas encore activée/.test(texteDe(await dire(MEMBRE, '.identifier'))));
     assert(/pas encore activée/.test(texteDe(await dire(MEMBRE, '.chercherstickers chat'))));
     process.env.GIPHY_API_KEY = 'cle_giphy_1234567890';
     route(/api\.giphy\.com/, () => rJson({ data: [{ images: { fixed_height: { webp: 'http://exemple.test/s.webp' } } }] }));
