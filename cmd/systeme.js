@@ -67,6 +67,7 @@ module.exports = [
       }
       const cle = args[0].toUpperCase();
       if (aj.estSecret(cle)) return reply(REFUS_SECRET(P));
+      if (require('../lib/contexte').courant() && require('../lib/contexte').CLES.includes(cle)) return reply(`🔧 *${cle}* se change dans Kernel Connect > Paramètres (page « Mon bot »), pas par message.`);
       if (!aj.REGLABLES[cle]) return reply(`❓ « ${args[0]} » n’est pas un réglage modifiable par message.\nTape ${P}regler pour voir la liste.\n\n${REFUS_SECRET(P)}`);
       const v = args.slice(1).join(' ');
       if (!v) return reply(`✏️ ${P}regler ${cle} valeur\n_${aj.REGLABLES[cle].desc}_`);

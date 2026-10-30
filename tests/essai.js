@@ -19,6 +19,7 @@ const BOT = '242061111111@s.whatsapp.net';
 const ADMIN = '242062222222@s.whatsapp.net';
 const MEMBRE = '242063333333@s.whatsapp.net';
 const PROP = '242066000000@s.whatsapp.net';
+const REFUS = /réservée|qui gère ce bot|serveur partagé/i; // texte d'un refus de permission (quelle qu'en soit la raison)
 const envoyes = [];
 const reactions = [];
 const sock = {
@@ -50,6 +51,72 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
   await test('nos noms seulement : les anciens noms (style OVL) ne sont plus reconnus par défaut', () => {
     for (const a of ['kick', 'tagall', 'antidelete', 'welcome', 'allmenu']) assert(!handler.commands.has(a), a + ' ne doit plus exister');
     assert(handler.commands.has('expulser') && handler.commands.has('antisuppression') && handler.commands.has('bienvenue'));
+  });
+  await test('permissions : celui qui a SON bot a tout sauf diagnostic ; un titulaire sur serveur partagé a tout sauf le serveur ; les autres : commandes ouvertes', () => {
+    const perm = require('../lib/permissions');
+    const cmd = (n) => { const c = handler.commands.get(n); assert(c, 'commande absente : ' + n); return c; };
+    const inconnu = { isOwner: false, senderNum: '242060000001', mode: 'public' };
+    const proprio = { ...inconnu, isOwner: true };
+    const titulaire = { ...inconnu, titulaire: true };
+    const toutes = handler.liste.map((c) => c.name).filter((n) => n !== 'diagnostic');
+    for (const n of toutes) assert.strictEqual(perm.verifier(cmd(n), proprio), null, n + ' : propriétaire de son bot');
+    assert.strictEqual(perm.verifier(cmd('diagnostic'), proprio), 'admin', 'diagnostic : pas même le propriétaire de son bot');
+    assert.strictEqual(perm.verifier(cmd('diagnostic'), { ...proprio, admin: true }), null);
+    assert.strictEqual(perm.verifier(cmd('diagnostic'), { ...inconnu, admin: true }), null);
+    // titulaire d'une session d'un moteur partagé
+    for (const n of toutes) assert.strictEqual(perm.verifier(cmd(n), titulaire), perm.SERVEUR_PARTAGE.has(n) ? 'serveur' : null, n + ' : titulaire');
+    for (const n of ['bio', 'maphoto', 'bloquer', 'bannir', 'theme', 'lireauto', 'presence', 'antisuppression']) assert.strictEqual(perm.verifier(cmd(n), titulaire), null, n + ' : le titulaire agit sur son bot');
+    // les autres personnes
+    for (const n of perm.OUVERTES) assert.strictEqual(perm.verifier(cmd(n), inconnu), null, n + ' ouverte à tous');
+    for (const n of ['redemarrer', 'connecter', 'maj', 'regler', 'diffusion', 'bannir', 'bio', 'bloquer']) assert.strictEqual(perm.verifier(cmd(n), inconnu), 'proprietaire', n + ' : pas pour les autres');
+    process.env.COMMANDES_OUVERTES = 'theme, redemarrer,diagnostic';
+    try {
+      assert.strictEqual(perm.verifier(cmd('theme'), inconnu), null);
+      assert.strictEqual(perm.verifier(cmd('redemarrer'), inconnu), 'proprietaire');
+      assert.strictEqual(perm.verifier(cmd('diagnostic'), inconnu), 'admin');
+    } finally { delete process.env.COMMANDES_OUVERTES; }
+    assert.strictEqual(perm.verifier(cmd('theme'), inconnu), 'proprietaire');
+  });
+  await test('par le chemin réel du bot : une personne ordinaire utilise une commande ouverte, mais pas celles qui pilotent le serveur ou le compte', async () => {
+    assert(!REFUS.test(texteDe(await dire(MEMBRE, '.jid'))), 'jid ouverte à tous');
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.redemarrer'))));
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.bio salut'))));
+  });
+  await test('mode privé : le bot ne répond pas du tout aux autres (pas même un refus), ni en commande ouverte, ni en commande du propriétaire', async () => {
+    const config = require('../config');
+    const avant = config.MODE;
+    config.MODE = 'private';
+    try {
+      for (const t of ['.ping', '.jid', '.redemarrer', '.bio salut', '.menu']) assert.strictEqual((await dire(MEMBRE, t)).filter((x) => x.c.text || x.c.image || x.c.caption).length, 0, t + ' : silence pour un inconnu');
+      assert((await dire(PROP, '.ping', false)).length > 0, 'le propriétaire est servi');
+    } finally { config.MODE = avant; }
+    // mode choisi sur le site pour CETTE session seulement : le moteur reste public pour les autres sessions
+    const ctx = require('../lib/contexte');
+    assert.strictEqual((await ctx.executer({ MODE: 'private' }, () => dire(MEMBRE, '.ping'))).filter((x) => x.c.text).length, 0, 'session privée : silence');
+    assert((await ctx.executer({ MODE: 'public' }, () => dire(MEMBRE, '.ping'))).length > 0, 'session publique : répond');
+    // préfixe choisi sur le site : seul ce préfixe déclenche une commande
+    assert.strictEqual((await ctx.executer({ MODE: 'public', PREFIXE: '!' }, () => dire(MEMBRE, '.ping'))).filter((x) => x.c.text).length, 0, 'l’ancien préfixe ne marche plus');
+    assert((await ctx.executer({ MODE: 'public', PREFIXE: '!' }, () => dire(MEMBRE, '!ping'))).length > 0, 'le préfixe du site marche');
+  });
+  await test('diagnostic : seul l’administrateur de la plateforme (développeur) ; le propriétaire de son bot reçoit un refus clair', async () => {
+    const config = require('../config');
+    assert(config.ADMINS.includes('242056233409'), 'le numéro du créateur est administrateur');
+    const rep = await dire(PROP, '.diagnostic');
+    assert(/administrateur de la plateforme/.test(texteDe(rep)), texteDe(rep));
+    const avant = config.ADMINS.slice();
+    config.ADMINS.push(PROP.replace(/\D/g, '').slice(0, 20));
+    try { const r2 = await dire(PROP, '.diagnostic'); assert(!/administrateur de la plateforme/.test(texteDe(r2)), 'admin : accepté'); }
+    finally { config.ADMINS.splice(0, config.ADMINS.length, ...avant); }
+  });
+  await test('copies privées (statuts, vue unique en privé) : jamais vers l’administrateur depuis la session d’un autre numéro', () => {
+    const statuts = require('../lib/statuts');
+    const config = require('../config');
+    const avant = config.OWNERS.slice();
+    config.OWNERS.splice(0, config.OWNERS.length, '242061111111');
+    try {
+      assert.strictEqual(statuts.jidProprietaire({ user: { id: '242099999999:3@s.whatsapp.net' } }), '242061111111@s.whatsapp.net');
+      assert.strictEqual(statuts.jidProprietaire({ secondaire: true, user: { id: '242099999999:3@s.whatsapp.net' } }), '242099999999@s.whatsapp.net');
+    } finally { config.OWNERS.splice(0, config.OWNERS.length, ...avant); }
   });
   await test('menu accueil et catégorie', async () => {
     const rep = await dire(MEMBRE, '.menu');
@@ -183,7 +250,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
   });
   await test('aide d’une commande', async () => { assert(/expulser/.test(texteDe(await dire(MEMBRE, '.aide expulser')))); });
   await test('thème (propriétaire seulement)', async () => {
-    assert(/réservée/i.test(texteDe(await dire(MEMBRE, '.theme moderne'))));
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.theme moderne'))));
     assert(/Moderne/.test(texteDe(await dire(PROP, '.theme moderne'))));
     assert(/▸/.test(texteDe(await dire(MEMBRE, '.menu groupe'))));
   });
@@ -244,15 +311,25 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
   await test('premium et commandes publiques', async () => {
     await dire(PROP, '.ajouterpremium 242063333333');
     assert(/premium/.test(texteDe(await dire(PROP, '.listepremium'))));
-    assert(/réservée/i.test(texteDe(await dire(ADMIN, '.ajouterpremium 242062222222'))), 'non-proprio autorisé');
+    assert(REFUS.test(texteDe(await dire(ADMIN, '.ajouterpremium 242062222222'))), 'non-proprio autorisé');
     await dire(PROP, '.retirerpremium 242063333333');
   });
-  await test('mode privé : commande publique', async () => {
+  await test('mode privé : AUCUNE exception — ni commande rendue publique, ni premium ; silence total, même pour une commande réservée', async () => {
     config.MODE = 'private';
-    assert((await dire(MEMBRE, '.test')).length === 0);
-    await dire(PROP, '.commandepublique test');
-    assert((await dire(MEMBRE, '.test')).length > 0);
-    config.MODE = 'public';
+    try {
+      assert.strictEqual((await dire(MEMBRE, '.test')).length, 0);
+      await dire(PROP, '.commandepublique test');
+      assert.strictEqual((await dire(MEMBRE, '.test')).length, 0, 'même rendue publique : ignorée en mode privé');
+      await dire(PROP, '.ajouterpremium 242063333333');
+      assert.strictEqual((await dire(MEMBRE, '.test')).length, 0, 'même premium : ignorée en mode privé');
+      for (const t of ['.diagnostic', '.redemarrer', '.bannir 242060000009', '.ping', '.menu', 'salut']) assert.strictEqual((await dire(MEMBRE, t)).length, 0, t + ' : aucun message, pas même un refus');
+      config.MODE = 'public';
+      assert((await dire(MEMBRE, '.test')).length > 0, 'en public, la commande rendue publique répond');
+    } finally {
+      config.MODE = 'public';
+      await dire(PROP, '.retirercommandepublique test');
+      await dire(PROP, '.retirerpremium 242063333333');
+    }
   });
   await test('session supplémentaire : le titulaire utilise son bot en mode privé (même en « moi-même » @lid), sans droits de propriétaire', async () => {
     const mk = (num) => Object.assign(Object.create(sock), { secondaire: true, user: { id: num + ':9@s.whatsapp.net' } });
@@ -261,10 +338,10 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     try {
       const titulaire = mk('242099000000'); // numéro absent de NUMERO_OWNER
       assert((await direDe(titulaire, '.ping')).length > 0, 'le titulaire doit pouvoir utiliser les commandes normales');
-      assert(/réservée au propriétaire/i.test(texteDe(await direDe(titulaire, '.bannir 242063333333 test'))), 'mais pas les commandes du propriétaire');
+      assert(REFUS.test(texteDe(await direDe(titulaire, '.redemarrer'))), 'mais pas les commandes qui agissent sur le serveur partagé');
       assert(!require('../lib/permissions').estBanni('242063333333'));
       const proprio = mk('242066000000'); // numéro présent dans NUMERO_OWNER
-      assert(!/réservée au propriétaire/i.test(texteDe(await direDe(proprio, '.bannir 242063333333 test'))), 'le propriétaire est reconnu même en @lid');
+      assert(!REFUS.test(texteDe(await direDe(proprio, '.bannir 242063333333 test'))), 'le propriétaire est reconnu même en @lid');
       await direDe(proprio, '.debannir 242063333333');
       // un tiers qui écrit au numéro d'une session supplémentaire reste ignoré en mode privé
       envoyes.length = 0;
@@ -279,7 +356,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     process.env.SITE_URL = 'https://kernel-connect.vercel.app';
     try {
       const moi = mk('242099000000'); // absent de NUMERO_OWNER
-      assert(!/réservée au propriétaire/i.test(texteDe(await direDe(moi, '.bannir 242063333333 test'))), 'sur son propre moteur, il a les droits de propriétaire');
+      assert(!REFUS.test(texteDe(await direDe(moi, '.bannir 242063333333 test'))), 'sur son propre moteur, il a les droits de propriétaire');
       await direDe(moi, '.debannir 242063333333');
       envoyes.length = 0;
       await handler.traiter(moi, { key: { remoteJid: '242063333333@s.whatsapp.net', fromMe: false, id: 'M' + ++n }, message: { conversation: '.bannir 242055555555 test' }, pushName: 'Tiers', messageTimestamp: 1 });
@@ -287,8 +364,8 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       // conversation avec soi-même non marquée « envoyé par moi » : numéro normal, puis identifiant masqué @lid de la session
       const moi2 = Object.assign(Object.create(sock), { secondaire: true, user: { id: '242099000000:17@s.whatsapp.net', lid: '54829904875595:17@lid' } });
       const depuis = async (s, jidDe, texte) => { envoyes.length = 0; await handler.traiter(s, { key: { remoteJid: jidDe, fromMe: false, id: 'N' + ++n }, message: { conversation: texte }, pushName: 'Moi', messageTimestamp: 1 }); return envoyes.slice(); };
-      assert(!/réservée au propriétaire/i.test(texteDe(await depuis(moi2, '242099000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'mon numéro, sans « fromMe »');
-      assert(!/réservée au propriétaire/i.test(texteDe(await depuis(moi2, '54829904875595@lid', '.bannir 242044444444 test'))), 'mon identifiant masqué, sans « fromMe »');
+      assert(!REFUS.test(texteDe(await depuis(moi2, '242099000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'mon numéro, sans « fromMe »');
+      assert(!REFUS.test(texteDe(await depuis(moi2, '54829904875595@lid', '.bannir 242044444444 test'))), 'mon identifiant masqué, sans « fromMe »');
       await direDe(moi2, '.debannir 242044444444');
       assert(!require('../lib/permissions').estBanni('242055555555'));
     } finally { if (avant === undefined) delete process.env.SITE_URL; else process.env.SITE_URL = avant; }
@@ -310,8 +387,10 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     const diag = require('../lib/diagnostic');
     const fetchAvant = global.fetch;
     global.fetch = async () => ({ ok: true, status: 200 });
+    const admins = require('../config').ADMINS, adminsAvant = admins.slice();
+    admins.push('242066000000'); // PROP est ici l'administrateur de la plateforme
     try {
-      assert(/réservée au propriétaire/i.test(texteDe(await dire(MEMBRE, '.diagnostic'))), 'refusé aux autres');
+      assert(REFUS.test(texteDe(await dire(MEMBRE, '.diagnostic'))), 'refusé aux autres');
       const rapport = texteDe(await dire(PROP, '.diagnostic'));
       assert(/Environnement/.test(rapport) && /ffmpeg/i.test(rapport) && /chargées/i.test(rapport) && /yt-dlp/.test(rapport), rapport);
       const une = texteDe(await dire(PROP, '.diagnostic ping'));
@@ -332,7 +411,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert.strictEqual(appels.length, 0, 'les commandes réservées ou dangereuses ne sont pas exécutées');
       assert(/casse : boum/.test(diag.rapportEssai(res)));
       assert(diag.structure([{ name: 'a', aliases: ['b'], desc: 'x', run() {} }, { name: 'b', aliases: [], desc: 'x', run() {} }]).some((p) => /utilisé par/.test(p)));
-    } finally { global.fetch = fetchAvant; }
+    } finally { global.fetch = fetchAvant; admins.splice(0, admins.length, ...adminsAvant); }
   });
   await test('yt-dlp : installation automatique sur Render, jamais bloquante ni fatale ; réactions : pas de pause entre deux personnes différentes dans l’essai à vide', async () => {
     const yt = require('../lib/ytdlp'), diag = require('../lib/diagnostic');
@@ -394,13 +473,13 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
   await test('session principale : un message de mon propre numéro (ex : réponse à mon propre statut), même sans « fromMe », est propriétaire ; un tiers ne l’est pas', async () => {
     const principale = Object.assign(Object.create(sock), { user: { id: '242098000000:3@s.whatsapp.net', lid: '54829904875595:3@lid' } });
     const depuis = async (s, jidDe, texte) => { envoyes.length = 0; await handler.traiter(s, { key: { remoteJid: jidDe, fromMe: false, id: 'P' + ++n }, message: { conversation: texte }, pushName: 'Moi', messageTimestamp: 1 }); return envoyes.slice(); };
-    assert(!/réservée au propriétaire/i.test(texteDe(await depuis(principale, '242098000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'mon numéro');
-    assert(!/réservée au propriétaire/i.test(texteDe(await depuis(principale, '54829904875595@lid', '.bannir 242044444444 test'))), 'mon identifiant masqué');
+    assert(!REFUS.test(texteDe(await depuis(principale, '242098000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'mon numéro');
+    assert(!REFUS.test(texteDe(await depuis(principale, '54829904875595@lid', '.bannir 242044444444 test'))), 'mon identifiant masqué');
     await depuis(principale, '242098000000@s.whatsapp.net', '.debannir 242044444444');
-    assert(/réservée au propriétaire/i.test(texteDe(await depuis(principale, '242055555555@s.whatsapp.net', '.bannir 242044444444 test'))), 'un tiers reste refusé');
+    assert(REFUS.test(texteDe(await depuis(principale, '242055555555@s.whatsapp.net', '.bannir 242044444444 test'))), 'un tiers reste refusé');
     // le titulaire d'une session supplémentaire d'un moteur partagé n'a toujours pas ces droits
     const secondaire = Object.assign(Object.create(sock), { secondaire: true, user: { id: '242097000000:3@s.whatsapp.net' } });
-    assert(/réservée au propriétaire/i.test(texteDe(await depuis(secondaire, '242097000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'moteur partagé : titulaire non propriétaire');
+    assert(REFUS.test(texteDe(await depuis(secondaire, '242097000000@s.whatsapp.net', '.redemarrer'))), 'moteur partagé : le titulaire n’a pas les commandes du serveur');
   });
   await test('niveaux : passage de niveau', async () => {
     const niv = require('../lib/niveaux');
@@ -468,7 +547,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(/Aucun rappel/.test(texteDe(await dire(MEMBRE, '.rappel liste'))));
   });
   await test('programmer : réservé aux admins du groupe', async () => {
-    assert(/réservée/i.test(texteDe(await dire(MEMBRE, '.programmer 1h | salut'))));
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.programmer 1h | salut'))));
     assert(/programmé/.test(texteDe(await dire(ADMIN, '.programmer 1h | salut'))));
     await dire(ADMIN, '.programmer annuler 1');
   });
@@ -553,7 +632,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     return envoyes.slice();
   };
   await test('annonce', async () => {
-    assert(/réservée/i.test(texteDe(await dire(MEMBRE, '.annonce Test | texte'))));
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.annonce Test | texte'))));
     const r = await dire(ADMIN, '.annonce Réunion samedi | À 15h au local');
     assert(/ANNONCE — RÉUNION SAMEDI/.test(texteDe(r)) && r[0].c.mentions.length >= 4, texteDe(r));
     assert(/À 15h/.test(texteDe(await dire(MEMBRE, '.annonce liste'))));
@@ -1147,7 +1226,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
   await test('statuts : lecture, « j’aime », copie privée, et commandes réservées', async () => {
     const lus = [];
     sock.readMessages = async (k) => { lus.push(...k); };
-    assert(/réservée/i.test(texteDe(await dire(MEMBRE, '.lirestatuts on'))));
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.lirestatuts on'))));
     assert(/activé/.test(texteDe(await dire(PROP, '.lirestatuts on', false))));
     assert(/activé/.test(texteDe(await dire(PROP, '.aimerstatuts on', false))));
     assert(/🔥/.test(texteDe(await dire(PROP, '.aimerstatuts emoji 🔥', false))));
@@ -1206,7 +1285,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
       updateProfilePicturePrivacy: async (v) => appels.push(['pppriv', v]),
       updateProfilePicture: async (j, b) => appels.push(['pp', j, b.length]),
     });
-    assert(/réservée/i.test(texteDe(await dire(MEMBRE, '.coches personne'))));
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.coches personne'))));
     const c = texteDe(await dire(PROP, '.confidentialite', false));
     assert(/Dernière connexion : 👥 mes contacts/.test(c) && /désactivés/.test(c) && /Appels/.test(c), c);
     assert(/Bio mise à jour/.test(texteDe(await dire(PROP, '.bio Assistant de MWENOBANGUE Labs', false))));

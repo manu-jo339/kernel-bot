@@ -13,7 +13,7 @@ try {
   console.error('[config] personnalisation.json illisible, valeurs par défaut utilisées :', e.message);
 }
 
-module.exports = {
+const configBrute = {
   PREFIXE: process.env.PREFIXE || '.',
   MODE: (process.env.MODE || 'public').toLowerCase(),
   NOM_BOT: 'Kernel Bot', // nom officiel : fixe, ni le .env ni une commande ne peuvent le changer
@@ -24,6 +24,9 @@ module.exports = {
     .split(',')
     .map(chiffres)
     .filter(Boolean),
+  // Administrateur de la plateforme (le développeur) : seul(s) autorisé(s) à utiliser « diagnostic » sur n'importe quel bot.
+  // Numéro du créateur (personnalisation.json) + NUMERO_ADMIN (séparés par des virgules). Un utilisateur qui déploie SON bot a toutes les autres commandes.
+  ADMINS: [chiffres(perso.createur && perso.createur.numero), ...(process.env.NUMERO_ADMIN || '').split(',').map(chiffres)].filter(Boolean),
   // Chaîne WhatsApp du projet (assistance) : lien d'invitation, facultatif
   // Chaîne d'assistance proposée dans le message de bienvenue (CHAINE_URL="" pour la retirer). Rien n'est suivi sans que la personne le demande.
   CHAINE_URL: (process.env.CHAINE_URL === undefined ? 'https://whatsapp.com/channel/0029Vb92uHC84OmJV6r39n41' : process.env.CHAINE_URL).trim(),
@@ -40,7 +43,7 @@ module.exports = {
     menu: { titre: '🤖 {NOM_BOT}', pied: '', afficherDescriptions: true, ...(perso.menu || {}) },
     emojis: { categories: {}, reaction: '🪄', ...(perso.emojis || {}) },
     messages: {
-      reserveProprietaire: '⛔ Commande réservée au propriétaire du bot.',
+      reserveProprietaire: '🔒 Seule la personne qui gère ce bot peut utiliser cette commande.',
       reserveGroupe: '👥 Cette commande fonctionne uniquement dans un groupe.',
       reserveAdmin: '⛔ Commande réservée aux administrateurs du groupe.',
       erreur: '⚠️ Une erreur est survenue pendant l’exécution de la commande.',
@@ -72,4 +75,7 @@ module.exports = {
 };
 
 // Réglages modifiés par message WhatsApp (commande « regler ») : ils passent avant le fichier .env
-require('./lib/ajustements').charger(module.exports);
+require('./lib/ajustements').charger(configBrute);
+
+// Réglages par session (Kernel Connect > Paramètres) : voir lib/contexte.js
+module.exports = require('./lib/contexte').envelopper(configBrute);

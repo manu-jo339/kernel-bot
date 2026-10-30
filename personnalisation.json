@@ -16,7 +16,7 @@
     "reaction": "🪄"
   },
   "messages": {
-    "reserveProprietaire": "⛔ Commande réservée au propriétaire du bot.",
+    "reserveProprietaire": "🔒 Seule la personne qui gère ce bot peut utiliser cette commande.",
     "reserveGroupe": "👥 Cette commande fonctionne uniquement dans un groupe.",
     "reserveAdmin": "⛔ Commande réservée aux administrateurs du groupe.",
     "erreur": "⚠️ Une erreur est survenue pendant l’exécution de la commande."

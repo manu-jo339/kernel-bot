@@ -395,6 +395,52 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(nouveau.dejaVu('b|349'), true);
   });
 
+  await test('données gardées dans la session : le MODE privé, les bannis, les rappels survivent à un disque effacé (Render)', async () => {
+    const persistance = require('../lib/persistance');
+    const store = require('../lib/store');
+    const config = require('../config');
+    const ajust = require('../lib/ajustements');
+    const { db } = require('../lib/db');
+    const { BufferJSON } = require('@whiskeysockets/baileys');
+    const disque = new Map();
+    const cles = {
+      get: async (type, ids) => Object.fromEntries(ids.map((id) => [id, disque.has(type + '-' + id) ? JSON.parse(disque.get(type + '-' + id), BufferJSON.reviver) : null])),
+      set: async (data) => { for (const t in data) for (const id in data[t]) disque.set(t + '-' + id, JSON.stringify(data[t][id], BufferJSON.replacer)); },
+    };
+    const modeAvant = config.MODE;
+    try {
+      assert.ok(ajust.definir(config, 'MODE', 'private').ok);
+      store.set('ban', 'u:242060009999', { ts: 1, raison: 'essai' });
+      store.set('anciens', 'x', { ts: 1, ids: ['a|1'] });
+      db.prepare('INSERT INTO jobs (quand, type, data, repete, cle) VALUES (?, ?, ?, 0, ?)').run(Date.now() + 3600000, 'rappel-essai', '{"texte":"a"}', 'cle-essai');
+      const a = persistance.creer(cles);
+      assert.strictEqual(await a.sauver(), true);
+      assert.strictEqual(await a.sauver(), false, 'rien de changé : pas de nouvelle écriture');
+      const ecrit = JSON.parse(disque.get('kernel-donnees-instantane'));
+      assert.ok(!ecrit.docs.some((d) => d.ns === 'anciens'), 'les identifiants de messages vus ne sont pas dans l’instantané');
+      assert.ok(!/KEY|TOKEN|SECRET/i.test(JSON.stringify(ecrit.reglages)), 'aucun secret');
+      // « redéploiement » : le disque est vidé, le MODE revient à public
+      store.del('ban', 'u:242060009999');
+      db.prepare("DELETE FROM jobs WHERE type = 'rappel-essai'").run();
+      ajust.supprimer(config, 'MODE');
+      config.MODE = 'public';
+      persistance.reinitialiser();
+      const b = persistance.creer(cles);
+      const r = await b.charger();
+      assert.ok(r && r.docs >= 1, JSON.stringify(r));
+      assert.strictEqual(config.MODE, 'private', 'le mode privé est revenu');
+      assert.ok(store.get('ban', 'u:242060009999'), 'banni restauré');
+      assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE type = 'rappel-essai'").get().n, 1, 'rappel restauré, une seule fois');
+      persistance.reinitialiser();
+      await persistance.creer(cles).charger();
+      assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE type = 'rappel-essai'").get().n, 1, 'pas de doublon au deuxième chargement');
+    } finally {
+      store.del('ban', 'u:242060009999'); store.del('anciens', 'x');
+      db.prepare("DELETE FROM jobs WHERE type = 'rappel-essai'").run();
+      ajust.supprimer(config, 'MODE'); config.MODE = modeAvant;
+    }
+  });
+
   await test('présence : le bot ne reste jamais « en ligne » (notifications du téléphone), sauf réglage explicite', async () => {
     const { gardienPresence } = require('../lib/session');
     const reglages = require('../lib/reglages');
@@ -410,6 +456,50 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     reglages.ecrire({ presenceMode: 'enligne' });
     try { await sock.sendPresenceUpdate('available'); assert.strictEqual(envoyes[envoyes.length - 1], 'available', 'réglage explicite respecté'); }
     finally { reglages.ecrire({ presenceMode: 'aucune' }); }
+  });
+
+  await test('réglages de l’utilisateur (Kernel Connect > Paramètres) : mode, préfixe, stickers ; appliqués par session ; jamais d’ouverture par défaut', async () => {
+    const ctx = require('../lib/contexte');
+    const config = require('../config');
+    const { chargerUtilisateur } = require('../lib/session');
+    // validation : le mode est la protection essentielle
+    assert.strictEqual(ctx.nettoyer({ prefixe: '!', mode: 'private', sticker_pack: ' Mon pack ', sticker_auteur: '' }).PREFIXE, '!');
+    assert.deepStrictEqual(ctx.nettoyer({ prefixe: '!', mode: 'private', sticker_pack: ' Mon pack ' }), { PREFIXE: '!', MODE: 'private', STICKER_PACK: 'Mon pack' });
+    assert.strictEqual(ctx.nettoyer({ prefixe: '!' }), null, 'sans mode valide : rien');
+    assert.strictEqual(ctx.nettoyer({ mode: 'tous' }), null);
+    assert.deepStrictEqual(ctx.nettoyer({ mode: 'public', prefixe: 'ab c' }), { MODE: 'public' }, 'préfixe invalide ignoré');
+    assert.deepStrictEqual(ctx.nettoyer({ mode: 'public', prefixe: '$$$$' }), { MODE: 'public' });
+    // contexte par session : deux sessions, deux jeux de réglages, sans se mélanger
+    const globalMode = config.MODE, globalPrefixe = config.PREFIXE;
+    const [a, b] = await Promise.all([
+      ctx.executer({ MODE: 'private', PREFIXE: '!' }, async () => { await new Promise((ok) => setTimeout(ok, 15)); return [config.MODE, config.PREFIXE]; }),
+      ctx.executer({ MODE: 'public', PREFIXE: '#' }, async () => { await new Promise((ok) => setTimeout(ok, 5)); return [config.MODE, config.PREFIXE]; }),
+    ]);
+    assert.deepStrictEqual(a, ['private', '!']);
+    assert.deepStrictEqual(b, ['public', '#']);
+    assert.deepStrictEqual([config.MODE, config.PREFIXE], [globalMode, globalPrefixe], 'hors session : valeurs du moteur');
+    assert.strictEqual(ctx.executer(null, () => config.MODE), globalMode);
+    // lecture depuis la base (mode Supabase), avec et sans la migration 006
+    const sauve = { url: process.env.SUPABASE_URL, cle: process.env.SUPABASE_SERVICE_KEY, fetch: global.fetch };
+    process.env.SUPABASE_URL = 'https://exemple.supabase.co';
+    process.env.SUPABASE_SERVICE_KEY = 'sb_secret_test';
+    try {
+      const id = '123e4567-e89b-42d3-a456-426614174000';
+      global.fetch = async () => ({ ok: true, json: async () => [{ profiles: { display_name: 'Josué', bot_prefix: '!', bot_mode: 'private', sticker_pack: 'Pack', sticker_author: 'Moi' } }] });
+      const s1 = {};
+      await chargerUtilisateur(id, s1);
+      assert.deepStrictEqual(s1.reglagesSite, { PREFIXE: '!', MODE: 'private', STICKER_PACK: 'Pack', STICKER_AUTEUR: 'Moi' });
+      // migration absente : la première requête est refusée, la seconde donne le nom ; aucun réglage connu → le bot reste PRIVÉ
+      let n = 0;
+      global.fetch = async () => (++n === 1 ? { ok: false, status: 400 } : { ok: true, json: async () => [{ profiles: { display_name: 'Josué' } }] });
+      const s2 = {};
+      await chargerUtilisateur(id, s2);
+      assert.strictEqual(s2.utilisateur, 'Josué');
+      assert.strictEqual(s2.reglagesSite, undefined, 'migration absente : on ne passe jamais en public tout seul');
+    } finally {
+      global.fetch = sauve.fetch;
+      for (const [k, v] of [['SUPABASE_URL', sauve.url], ['SUPABASE_SERVICE_KEY', sauve.cle]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
   });
 
   await test('nom d’utilisateur du site : lu dans la base, assaini, affiché dans le menu et l’accueil (jamais « Propriétaire »)', async () => {
@@ -429,7 +519,8 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
       const sock = {};
       await chargerUtilisateur(id, sock);
       assert.strictEqual(sock.utilisateur, 'Josué');
-      assert(appels[0].includes(`id=eq.${id}`) && appels[0].includes('profiles(display_name)'));
+      assert(appels[0].includes(`id=eq.${id}`) && appels[0].includes('profiles(display_name,bot_prefix,bot_mode'));
+      assert.strictEqual(sock.reglagesSite, undefined, 'réponse sans mode valide : rien n’est appliqué');
       const autre = {};
       await chargerUtilisateur('principal', autre);
       assert.strictEqual(autre.utilisateur, undefined, 'session non-UUID : aucune requête');
