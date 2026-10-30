@@ -32,7 +32,7 @@ async function derniereVersion() {
     if (!j.version) throw new Error('le fichier ne contient pas de « version »');
     return { version: String(j.version), notes: j.notes ? String(j.notes) : '', url: j.url ? String(j.url) : url };
   }
-  const h = process.env.GITHUB_TOKEN ? { authorization: 'Bearer ' + process.env.GITHUB_TOKEN } : {};
+  const h = require('../lib/partage').enteteGithub();
   const j = await web.json(`https://api.github.com/repos/${depot}/releases/latest`, { headers: h });
   return { version: String(j.tag_name || ''), notes: j.body ? String(j.body) : '', url: j.html_url };
 }

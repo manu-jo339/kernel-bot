@@ -1,6 +1,7 @@
 // Kernel Bot — recherches et informations : images, web, Wikipédia, GitHub, films, météo, anime, paroles, applications…
 // Tous les services utilisés sont gratuits et sans clé (sauf indication). Rien n'est envoyé d'autre que la recherche demandée.
 const config = require('../config');
+const partage = require('../lib/partage');
 const web = require('../lib/web');
 const sticker = require('../lib/sticker');
 const media = require('../lib/media');
@@ -147,7 +148,7 @@ module.exports = [
     run: async ({ args, reply }) => {
       const q = args.join(' ').trim();
       if (!q) return reply(`🐙 ${P()}github utilisateur\n${P()}github proprietaire/depot\n${P()}github mot-clé (recherche de dépôts)`);
-      const h = { accept: 'application/vnd.github+json', ...(process.env.GITHUB_TOKEN ? { authorization: 'Bearer ' + process.env.GITHUB_TOKEN } : {}) };
+      const h = { accept: 'application/vnd.github+json', ...partage.enteteGithub() };
       const gh = (p) => web.json('https://api.github.com' + p, { headers: h });
       const date = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
       try {
@@ -341,21 +342,25 @@ module.exports = [
     ...base,
     name: 'chercherstickers',
     aliases: ['stickersearch', 'stickerschercher'],
-    desc: 'Cherche des stickers sur Tenor (clé TENOR_API_KEY)',
+    desc: 'Cherche des stickers sur GIPHY : .chercherstickers chat content',
     run: async ({ sock, jid, msg, args, reply }) => {
       const q = requete(msg, args);
-      if (!process.env.TENOR_API_KEY) return reply('⚙️ La recherche de stickers demande une clé gratuite Tenor (Google Cloud, « Tenor API »).\nLe propriétaire l’ajoute dans le fichier .env : TENOR_API_KEY=…');
+      const cle = partage.giphy();
+      if (!cle) return reply('⚙️ La recherche de stickers n’est pas encore activée sur ce bot.');
       if (!q) return reply(`🔍 ${P()}chercherstickers chat content`);
       try {
-        const j = await web.json(`https://tenor.googleapis.com/v2/search?q=${enc(q)}&key=${enc(process.env.TENOR_API_KEY)}&client_key=kernelbot&searchfilter=sticker&media_filter=webp_transparent&limit=5&contentfilter=high&locale=fr_FR`);
-        const l = (j.results || []).map((r) => r.media_formats?.webp_transparent?.url || r.media_formats?.tinywebp_transparent?.url).filter(Boolean);
+        const j = await web.json(`https://api.giphy.com/v1/stickers/search?api_key=${enc(cle)}&q=${enc(q)}&limit=5&rating=g&lang=fr`);
+        const l = (j.data || []).map((r) => r.images?.fixed_height?.webp || r.images?.original?.webp).filter(Boolean);
         if (!l.length) return reply(`❓ Aucun sticker pour « ${q} ».`);
+        let envoyes = 0;
         for (const u of l.slice(0, 5)) {
           try {
             const f = await web.fichier(u, { max: 2 * 1024 * 1024 });
             await sock.sendMessage(jid, { sticker: await sticker.metadonnees(f.buffer) });
+            envoyes++;
           } catch {}
         }
+        if (envoyes) await reply('🔎 Stickers : GIPHY');
       } catch {
         await indisponible(reply);
       }
@@ -415,7 +420,7 @@ module.exports = [
       if (!m) return reply(`🐙 ${P()}telechargergit https://github.com/proprietaire/depot`);
       const [, o, r, br] = m;
       try {
-        const h = { accept: 'application/vnd.github+json', ...(process.env.GITHUB_TOKEN ? { authorization: 'Bearer ' + process.env.GITHUB_TOKEN } : {}) };
+        const h = { accept: 'application/vnd.github+json', ...partage.enteteGithub() };
         const info = await web.json(`https://api.github.com/repos/${o}/${r}`, { headers: h });
         if (info.size > 80 * 1024) return reply(`⚠️ Ce dépôt est trop gros (${Math.round(info.size / 1024)} Mo, limite 80 Mo).`);
         await reply(`⏬ Téléchargement de *${info.full_name}*…`);

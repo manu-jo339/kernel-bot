@@ -1200,15 +1200,15 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(/Bonjour à toi/.test(texteDe(await dire(MEMBRE, '.boitetemp 1', false))));
     assert(/\?\s*$|😂/.test(texteDe(await dire(MEMBRE, '.blague'))) || /👉/.test(texteDe(await dire(MEMBRE, '.blague'))));
     assert(/« .+ »\n— /.test(texteDe(await dire(MEMBRE, '.citation'))));
-    delete process.env.AUDD_API_TOKEN; delete process.env.TENOR_API_KEY;
+    delete process.env.AUDD_API_TOKEN; delete process.env.GIPHY_API_KEY;
     assert(/AUDD_API_TOKEN/.test(texteDe(await dire(MEMBRE, '.identifier'))));
-    assert(/TENOR_API_KEY/.test(texteDe(await dire(MEMBRE, '.chercherstickers chat'))));
-    process.env.TENOR_API_KEY = 'k';
-    route(/tenor\.googleapis\.com/, () => rJson({ results: [{ media_formats: { webp_transparent: { url: 'http://exemple.test/s.webp' } } }] }));
+    assert(/pas encore activée/.test(texteDe(await dire(MEMBRE, '.chercherstickers chat'))));
+    process.env.GIPHY_API_KEY = 'cle_giphy_1234567890';
+    route(/api\.giphy\.com/, () => rJson({ data: [{ images: { fixed_height: { webp: 'http://exemple.test/s.webp' } } }] }));
     route(/exemple\.test\/s\.webp/, async () => rBuf(await sharpT(png).webp().toBuffer(), 'image/webp'));
     const ss = est(await dire(MEMBRE, '.chercherstickers chat'), 'sticker');
     assert(ss && ss.c.sticker.slice(0, 4).toString() === 'RIFF');
-    delete process.env.TENOR_API_KEY;
+    delete process.env.GIPHY_API_KEY;
     routes.length = 0;
   });
   await test('IA nommée, image IA, voix, emojimix, ameliorer, brouiller, fauxmessage, stickertelegram', async () => {

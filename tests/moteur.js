@@ -597,6 +597,29 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     }
   });
 
+  await test('clés partagées de la plateforme (GitHub, Giphy) : fournies par le site à toutes les sessions, jamais un réglage, la clé du .env passe avant', async () => {
+    const ctx = require('../lib/contexte');
+    const config = require('../config');
+    const partage = require('../lib/partage');
+    const sauve = { g: process.env.GITHUB_TOKEN, k: process.env.GIPHY_API_KEY };
+    try {
+      delete process.env.GITHUB_TOKEN; delete process.env.GIPHY_API_KEY;
+      const r = ctx.nettoyer({ mode: 'private', partage: { github: 'ghp_partage_1234567890', giphy: 'courte', autre: 'x'.repeat(30) } });
+      assert.deepStrictEqual(r.CLES_PARTAGEES, { github: 'ghp_partage_1234567890' }, 'seules les clés valides des services connus');
+      assert.strictEqual(config.CLES_PARTAGEES, undefined, 'pas un réglage du moteur');
+      assert.strictEqual(partage.github(), null, 'hors session : rien');
+      assert.deepStrictEqual(partage.enteteGithub(), {});
+      assert.strictEqual(ctx.executer(r, () => partage.github()), 'ghp_partage_1234567890');
+      assert.deepStrictEqual(ctx.executer(r, () => partage.enteteGithub()), { authorization: 'Bearer ghp_partage_1234567890' });
+      assert.strictEqual(ctx.executer(r, () => partage.giphy()), null, 'clé invalide écartée');
+      process.env.GITHUB_TOKEN = 'ghp_du_env_0987654321';
+      assert.strictEqual(ctx.executer(r, () => partage.github()), 'ghp_du_env_0987654321', 'la clé du .env passe avant');
+      assert.deepStrictEqual(partage.nettoyer('n’importe quoi'), {});
+    } finally {
+      for (const [k, v] of [['GITHUB_TOKEN', sauve.g], ['GIPHY_API_KEY', sauve.k]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
   await test('Gemini : ordre Mistral → Gemini → Groq, clé de session, et clé invalide (400) = refusée puis relais', async () => {
     const ctx = require('../lib/contexte');
     const ia = require('../lib/ia');
