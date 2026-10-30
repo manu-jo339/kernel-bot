@@ -301,6 +301,34 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     await handler.traiter(sock, citation('INCONNU', '.vv'));
     assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
   });
+  await test('diagnostic : réservé au propriétaire ; outils + structure ; une commande ; essai à vide qui sépare réussites, silences, erreurs et commandes dangereuses', async () => {
+    const diag = require('../lib/diagnostic');
+    const fetchAvant = global.fetch;
+    global.fetch = async () => ({ ok: true, status: 200 });
+    try {
+      assert(/réservée au propriétaire/i.test(texteDe(await dire(MEMBRE, '.diagnostic'))), 'refusé aux autres');
+      const rapport = texteDe(await dire(PROP, '.diagnostic'));
+      assert(/Environnement/.test(rapport) && /ffmpeg/i.test(rapport) && /chargées/i.test(rapport) && /yt-dlp/.test(rapport), rapport);
+      const une = texteDe(await dire(PROP, '.diagnostic ping'));
+      assert(/^✅/.test(une.trim()), une);
+      assert(/introuvable/.test(texteDe(await dire(PROP, '.diagnostic nexistepas'))));
+      assert(/n’est pas essayée à vide/.test(texteDe(await dire(PROP, '.diagnostic redemarrer'))), 'une commande dangereuse n’est jamais lancée');
+      const appels = [];
+      const liste = [
+        { name: 'bon', aliases: [], desc: 'x', run: async ({ reply }) => reply('salut') },
+        { name: 'muet', aliases: [], desc: 'x', run: async () => {} },
+        { name: 'casse', aliases: [], desc: 'x', run: async () => { throw new Error('boum'); } },
+        { name: 'proprio', aliases: [], desc: 'x', ownerOnly: true, run: async () => appels.push('proprio') },
+        { name: 'redemarrer', aliases: [], desc: 'x', run: async () => appels.push('redemarrer') },
+        { name: 'groupe', aliases: [], desc: 'x', groupOnly: true, run: async () => appels.push('groupe') },
+      ];
+      const res = await diag.essayerTout(liste, { config: require('../config') });
+      assert.deepStrictEqual([res.ok.length, res.silence.length, res.erreur.length, res.ignorees.length], [1, 1, 1, 3]);
+      assert.strictEqual(appels.length, 0, 'les commandes réservées ou dangereuses ne sont pas exécutées');
+      assert(/casse : boum/.test(diag.rapportEssai(res)));
+      assert(diag.structure([{ name: 'a', aliases: ['b'], desc: 'x', run() {} }, { name: 'b', aliases: [], desc: 'x', run() {} }]).some((p) => /utilisé par/.test(p)));
+    } finally { global.fetch = fetchAvant; }
+  });
   await test('niveaux : passage de niveau', async () => {
     const niv = require('../lib/niveaux');
     require('../lib/store').set('xp', GRP + '|242063333333', { xp: 49, msgs: 1, dernier: 0 });
