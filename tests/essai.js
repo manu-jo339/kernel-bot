@@ -98,6 +98,47 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert.strictEqual((await ctx.executer({ MODE: 'public', PREFIXE: '!' }, () => dire(MEMBRE, '.ping'))).filter((x) => x.c.text).length, 0, 'l’ancien préfixe ne marche plus');
     assert((await ctx.executer({ MODE: 'public', PREFIXE: '!' }, () => dire(MEMBRE, '!ping'))).length > 0, 'le préfixe du site marche');
   });
+  await test('activation : un numéro tout juste connecté reste muet jusqu’à « .start » du propriétaire ; « .pause » le remet en sommeil ; état gardé', async () => {
+    const activation = require('../lib/activation');
+    const ctx = require('../lib/contexte');
+    const disque = {};
+    const keys = { get: async (t, ids) => Object.fromEntries(ids.filter((i) => disque[t]?.[i] !== undefined).map((i) => [i, JSON.parse(JSON.stringify(disque[t][i]))])), set: async (d) => { for (const [t, v] of Object.entries(d)) disque[t] = { ...(disque[t] || {}), ...v }; } };
+    const muet = (r) => r.filter((x) => x.c.text || x.c.image || x.c.caption).length === 0;
+    sock.activation = activation.creer(keys);
+    await sock.activation.attendre();
+    sock.enAttente = true;
+    try {
+      for (const [de, t, g] of [[MEMBRE, '.ping', true], [MEMBRE, '.menu', true], [MEMBRE, '.start', true], [PROP, '.ping', false], [PROP, '.menu', false], [PROP, '.regler MODE public', false], [PROP, 'bonjour le bot', false]]) {
+        assert(muet(await dire(de, t, g)), `${t} (${de === PROP ? 'propriétaire' : 'autre'}) : silence total en attente`);
+      }
+      assert.strictEqual(sock.enAttente, true, 'un inconnu ne peut pas activer le bot');
+      assert.strictEqual(disque['kernel-activation'].etat.attente, true, 'l’attente est enregistrée dans la session');
+      // le propriétaire active avec « .start » (même avec un préfixe emoji choisi sur le site, « . » marche aussi)
+      const rep = await ctx.executer({ MODE: 'public', PREFIXE: '😀' }, () => dire(PROP, '.start', false));
+      assert.strictEqual(sock.enAttente, false);
+      assert(rep.length > 0 && !muet(rep), 'accueil ou confirmation envoyé');
+      assert.strictEqual(disque['kernel-activation'].etat.attente, false, 'activation enregistrée : survit à un redéploiement');
+      assert((await dire(MEMBRE, '.ping')).length > 0, 'actif : répond');
+      assert(/déjà en service/.test(texteDe(await dire(PROP, '.start', false))));
+      // pause
+      assert(/sommeil/.test(texteDe(await dire(PROP, '.pause', false))));
+      assert.strictEqual(sock.enAttente, true);
+      assert.strictEqual(disque['kernel-activation'].etat.attente, true);
+      assert(muet(await dire(MEMBRE, '.ping')), 'en sommeil : silence');
+      // préfixe du site
+      await ctx.executer({ MODE: 'public', PREFIXE: '😀' }, () => dire(PROP, '😀start', false));
+      assert.strictEqual(sock.enAttente, false, '« préfixe du site + start » marche aussi');
+      // seuls les propriétaires : un inconnu ne peut ni activer ni mettre en pause
+      assert(muet(await dire(MEMBRE, '.pause')) || sock.enAttente === false);
+      assert.strictEqual(sock.enAttente, false);
+    } finally { delete sock.activation; delete sock.enAttente; }
+    // pendant l'attente : ni bienvenue de groupe, ni anti-appel
+    const evts = {};
+    const faux = { enAttente: true, ev: { on: (n, f) => { evts[n] = f; } }, sendMessage: async () => { throw new Error('rien ne doit être envoyé'); }, rejectCall: async () => { throw new Error('rien'); } };
+    require('../lib/evenements').brancher(faux);
+    assert.strictEqual(await evts['group-participants.update']({ id: GRP, action: 'add', participants: [MEMBRE] }), undefined);
+    assert.strictEqual(await evts['call']([{ id: 'c1', from: MEMBRE, status: 'offer' }]), undefined);
+  });
   await test('diagnostic : seul l’administrateur de la plateforme (développeur) ; le propriétaire de son bot reçoit un refus clair', async () => {
     const config = require('../config');
     assert(config.ADMINS.includes('242056233409'), 'le numéro du créateur est administrateur');

@@ -632,6 +632,44 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     }
   });
 
+  await test('activation : état gardé dans la session ; seul un NOUVEAU numéro démarre en attente ; un bot déjà en service reste actif ; DEMARRAGE_AUTO', async () => {
+    const act = require('../lib/activation');
+    const disque = {};
+    const keys = { get: async (t, ids) => Object.fromEntries(ids.filter((i) => disque[t]?.[i] !== undefined).map((i) => [i, disque[t][i]])), set: async (d) => { for (const [t, v] of Object.entries(d)) disque[t] = { ...(disque[t] || {}), ...v }; } };
+    const a = act.creer(keys);
+    await a.charger();
+    assert.strictEqual(a.connu(), false);
+    assert.strictEqual(a.enAttente(), false, 'rien d’enregistré : actif (bots existants jamais désactivés)');
+    await a.attendre();
+    const b = act.creer(keys); // « redéploiement » : nouvelle instance, même session
+    await b.charger();
+    assert(b.connu() && b.enAttente(), 'l’attente survit au redémarrage');
+    await b.activer();
+    const c = act.creer(keys);
+    await c.charger();
+    assert(c.connu() && !c.enAttente(), 'l’activation survit aussi');
+    // lecture impossible : jamais de désactivation
+    const d = act.creer({ get: async () => { throw new Error('base injoignable'); }, set: async () => {} });
+    await d.charger();
+    assert.strictEqual(d.enAttente(), false);
+    // écriture impossible : ne plante pas
+    const e = act.creer({ get: async () => ({}), set: async () => { throw new Error('refus'); } });
+    await e.attendre();
+    // qui démarre en attente
+    const avant = process.env.DEMARRAGE_AUTO;
+    try {
+      delete process.env.DEMARRAGE_AUTO;
+      assert.strictEqual(act.doitAttendre(true, false), true, 'nouveau numéro');
+      assert.strictEqual(act.doitAttendre(false, false), false, 'bot déjà en service avant la fonction (redéploiement) : actif');
+      assert.strictEqual(act.doitAttendre(true, true), false, 'état déjà enregistré : on le respecte');
+      process.env.DEMARRAGE_AUTO = 'oui';
+      assert.strictEqual(act.doitAttendre(true, false), false, 'DEMARRAGE_AUTO=oui : pas d’attente');
+    } finally { if (avant === undefined) delete process.env.DEMARRAGE_AUTO; else process.env.DEMARRAGE_AUTO = avant; }
+    // demande de démarrage reconnue (« . » ou préfixe du site), rien d'autre
+    for (const t of ['.start', '  .START ', '.demarrer', '.commencer', '😀start', '!start']) assert(act.estDemandeStart(t, t.includes('!') ? '!' : '😀'), t);
+    for (const t of ['start', '.starter', '.start now', '.menu', '!start', 'bonjour', '']) assert(!act.estDemandeStart(t, '😀'), JSON.stringify(t));
+  });
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();
