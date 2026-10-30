@@ -279,6 +279,41 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(m.lire('e'), undefined);
   });
 
+  await test('nom d’utilisateur du site : lu dans la base, assaini, affiché dans le menu et l’accueil (jamais « Propriétaire »)', async () => {
+    const auth = require('../lib/auth_supabase');
+    const { chargerUtilisateur, assainirNom } = require('../lib/session');
+    const menu = require('../lib/menu');
+    const bienvenue = require('../lib/bienvenue');
+    assert.strictEqual(assainirNom('  *Josué*\n_Arnauld_  '), 'Josué Arnauld');
+    assert.strictEqual(assainirNom('x'.repeat(80)).length, 30);
+    const sauve = { url: process.env.SUPABASE_URL, cle: process.env.SUPABASE_SERVICE_KEY, api: auth.api };
+    process.env.SUPABASE_URL = 'https://exemple.supabase.co';
+    process.env.SUPABASE_SERVICE_KEY = 'sb_secret_test';
+    const appels = [];
+    auth.api = async (chemin) => { appels.push(chemin); return { ok: true, json: async () => [{ profiles: { display_name: ' Josué ' } }] }; };
+    try {
+      const id = '123e4567-e89b-42d3-a456-426614174000';
+      const sock = {};
+      await chargerUtilisateur(id, sock);
+      assert.strictEqual(sock.utilisateur, 'Josué');
+      assert(appels[0].includes(`id=eq.${id}`) && appels[0].includes('profiles(display_name)'));
+      const autre = {};
+      await chargerUtilisateur('principal', autre);
+      assert.strictEqual(autre.utilisateur, undefined, 'session non-UUID : aucune requête');
+      assert.strictEqual(appels.length, 1);
+      auth.api = async () => { throw new Error('réseau'); };
+      await chargerUtilisateur(id, {}); // ne doit jamais lever
+    } finally {
+      auth.api = sauve.api;
+      for (const [k, v] of [['SUPABASE_URL', sauve.url], ['SUPABASE_SERVICE_KEY', sauve.cle]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+    const liste = [{ name: 'ping', categorie: 'Général', desc: '', aliases: [] }];
+    const t = menu.accueil('classique', liste, 'Josué').normalize('NFKC');
+    assert(/Utilisateur : Josué/.test(t) && !/Propri[ée]taire/i.test(t), t);
+    const b = bienvenue.texte(5, 'classique', 'Josué');
+    assert(/Utilisateur : Josué/.test(b) && !/Propri[ée]taire/i.test(b), b);
+  });
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();

@@ -71,12 +71,12 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     for (let i = 0; i < 12; i++) vues.add(require('crypto').createHash('md5').update((await dire(MEMBRE, '.uptime')).find((x) => x.c.image).c.image).digest('hex'));
     assert(vues.size === 10, 'dix images différentes en boucle : ' + vues.size);
   });
-  await test('propriétaire : nom du .env dans le menu, jamais le numéro', async () => {
+  await test('utilisateur : nom du .env dans le menu, jamais le numéro', async () => {
     const config = require('../config');
     const avant = config.NOM_OWNER;
     config.NOM_OWNER = 'Ainz';
     const t = String((await dire(MEMBRE, '.menu')).find((x) => x.c.image).c.caption).normalize('NFKC');
-    assert(/PROPRIÉTAIRE : Ainz/i.test(t), t);
+    assert(/UTILISATEUR : Ainz/i.test(t) && !/PROPRIÉTAIRE : /i.test(t), t);
     assert(!/2420660/.test(t), 'numéro jamais affiché');
     config.NOM_OWNER = avant;
   });

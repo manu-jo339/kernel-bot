@@ -20,10 +20,10 @@ module.exports = [
     desc: 'Affiche les catégories de commandes',
     run: async ({ sock, jid, msg, reply, config, liste, args }) => {
       if (args[0]) {
-        const t = menu.categorie(theme(), liste, args[0]);
+        const t = menu.categorie(theme(), liste, args[0], sock.utilisateur);
         return reply(t || `❓ Catégorie « ${args[0]} » introuvable. Tape ${config.PREFIXE}menu pour voir la liste.`);
       }
-      const texte = menu.accueil(theme(), liste);
+      const texte = menu.accueil(theme(), liste, sock.utilisateur);
       const img = menu.THEMES[theme()]?.image ? menu.image() : null;
       if (!img) return reply(texte);
       // Image en tête avec l'encadré d'informations ; la liste des catégories suit dans un second message si la légende serait trop longue
@@ -37,15 +37,15 @@ module.exports = [
     ...base,
     name: 'allmenu',
     desc: 'Affiche toutes les commandes',
-    run: async ({ reply, liste }) => reply(menu.tout(theme(), liste)),
+    run: async ({ sock, reply, liste }) => reply(menu.tout(theme(), liste, sock.utilisateur)),
   },
   {
     ...base,
     name: 'description',
     desc: 'Explique une commande : aide <commande>',
-    run: async ({ reply, config, liste, args }) => {
+    run: async ({ sock, reply, config, liste, args }) => {
       const n = (args[0] || '').toLowerCase().replace(config.PREFIXE, '');
-      if (!n) return reply(menu.accueil(theme(), liste));
+      if (!n) return reply(menu.accueil(theme(), liste, sock.utilisateur));
       const c = liste.find((x) => x.name === n || x.aliases.includes(n));
       if (!c) return reply(`❓ Commande « ${n} » introuvable.`);
       const restr = [c.ownerOnly && 'propriétaire', c.groupOnly && 'groupe seulement', c.adminOnly && 'admins du groupe'].filter(Boolean);
@@ -128,7 +128,7 @@ module.exports = [
     ...base,
     name: 'bienvenuebot',
     desc: 'Réaffiche le message de bienvenue du bot',
-    run: async (ctx) => avecImage(ctx, require('../lib/bienvenue').texte(ctx.liste.length, theme())),
+    run: async (ctx) => avecImage(ctx, require('../lib/bienvenue').texte(ctx.liste.length, theme(), ctx.sock.utilisateur)),
   },
   {
     ...base,
