@@ -187,7 +187,7 @@ module.exports = [
     aliases: ['macle', 'macl'],
     categorie: 'IA',
     desc: 'Utilise TA propre clé d’IA (gratuite) : plus de limite quotidienne',
-    usage: '{P}macle mistral <ta clé> · {P}macle voir · {P}macle retirer [mistral|cerebras|groq]',
+    usage: '{P}macle mistral <ta clé> · {P}macle voir · {P}macle retirer [mistral|gemini|groq]',
     run: async ({ sock, msg, jid, isGroup, args, reply, senderNum }) => {
       const p = config.PREFIXE;
       const sous = (args[0] || '').toLowerCase();
@@ -208,7 +208,7 @@ module.exports = [
         return reply(ok ? '🗑️ Clé supprimée. Tu repasses sur les services du bot (avec limite quotidienne).' : 'Aucune clé à supprimer.');
       }
       if (!macle.FOURNISSEURS.includes(sous)) {
-        return reply(`🔑 *Ta propre clé d’IA*\nAvec ta clé gratuite, tu n’as plus la limite quotidienne du bot, et c’est ton quota à toi.\n\n*Comment faire :*\n1. Crée un compte gratuit chez Mistral (console.mistral.ai), Cerebras (cloud.cerebras.ai) ou Groq (console.groq.com) et génère une clé API.\n2. Écris-moi *en privé* : ${p}macle mistral TA_CLÉ\n\n${p}macle voir · ${p}macle retirer\n\n_Ta clé est chiffrée sur l’ordinateur du bot, jamais affichée. Tes messages sont alors traités par le service que tu as choisi, selon ses conditions._`);
+        return reply(`🔑 *Ta propre clé d’IA*\nAvec ta clé gratuite, tu n’as plus la limite quotidienne du bot, et c’est ton quota à toi.\n\n*Comment faire :*\n1. Crée un compte gratuit chez Mistral (console.mistral.ai), Google Gemini (aistudio.google.com) ou Groq (console.groq.com) et génère une clé API.\n2. Écris-moi *en privé* : ${p}macle mistral TA_CLÉ\n\n${p}macle voir · ${p}macle retirer\n\n_Ta clé est chiffrée sur l’ordinateur du bot, jamais affichée. Tes messages sont alors traités par le service que tu as choisi, selon ses conditions._`);
       }
       const cle = (args[1] || '').trim();
       try { await sock.sendMessage(jid, { delete: msg.key }); } catch {}

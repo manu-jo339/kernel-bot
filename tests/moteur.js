@@ -556,7 +556,7 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     const cs = require('../lib/clesite');
     const cle = Buffer.alloc(32, 7).toString('base64');
     const chiffrer = (clair, k = cle) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', Buffer.from(k, 'base64'), iv); const d = Buffer.concat([c.update(clair, 'utf8'), c.final()]); return ['v1', iv.toString('base64url'), c.getAuthTag().toString('base64url'), d.toString('base64url')].join('.'); };
-    const v = chiffrer(JSON.stringify({ groq: 'gsk_abcdefghijklmnop', mistral: 'court', inconnu: 'x'.repeat(30), cerebras: 'avec espace 1234567890' }));
+    const v = chiffrer(JSON.stringify({ groq: 'gsk_abcdefghijklmnop', mistral: 'court', inconnu: 'x'.repeat(30), gemini: 'avec espace 1234567890' }));
     assert.deepStrictEqual(cs.lire(v, cle), { groq: 'gsk_abcdefghijklmnop' }, 'clés invalides et services inconnus écartés');
     assert.deepStrictEqual(cs.lire(v, Buffer.alloc(32, 9).toString('base64')), {}, 'mauvaise clé : rien');
     assert.deepStrictEqual(cs.lire(v, ''), {}, 'ENGINES_KEY absente : rien');
@@ -568,13 +568,13 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     const ctx = require('../lib/contexte');
     const config = require('../config');
     const ia = require('../lib/ia');
-    const sauve = { fetch: global.fetch, g: process.env.GROQ_API_KEY, m: process.env.MISTRAL_API_KEY, c: process.env.CEREBRAS_API_KEY };
+    const sauve = { fetch: global.fetch, g: process.env.GROQ_API_KEY, m: process.env.MISTRAL_API_KEY, c: process.env.GEMINI_API_KEY };
     try {
       const reglages = ctx.nettoyer({ mode: 'private', ia: { groq: 'gsk_session_aaaaaaaa', mistral: 'nope', autre: 'x'.repeat(30) } });
       assert.deepStrictEqual(reglages.CLES_IA, { groq: 'gsk_session_aaaaaaaa' });
       assert.strictEqual(config.CLES_IA, undefined, 'pas un réglage du moteur');
       assert.strictEqual(ia.cleDeSession('groq'), null, 'hors session : aucune clé');
-      delete process.env.MISTRAL_API_KEY; delete process.env.CEREBRAS_API_KEY; process.env.GROQ_API_KEY = 'gsk_hebergeur_bbbbbbbb';
+      delete process.env.MISTRAL_API_KEY; delete process.env.GEMINI_API_KEY; process.env.GROQ_API_KEY = 'gsk_hebergeur_bbbbbbbb';
       const vues = [];
       global.fetch = async (url, init) => { vues.push(init.headers.Authorization); return { ok: true, json: async () => ({ choices: [{ message: { content: 'bonjour' } }] }), headers: { get: () => null } }; };
       const r = await ctx.executer(reglages, () => ia.repondre([{ role: 'user', content: 'salut' }]));
@@ -593,7 +593,27 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
       assert.deepStrictEqual(vues, ['Bearer gsk_session_aaaaaaaa', 'Bearer gsk_hebergeur_bbbbbbbb']);
     } finally {
       global.fetch = sauve.fetch;
-      for (const [k, v] of [['GROQ_API_KEY', sauve.g], ['MISTRAL_API_KEY', sauve.m], ['CEREBRAS_API_KEY', sauve.c]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      for (const [k, v] of [['GROQ_API_KEY', sauve.g], ['MISTRAL_API_KEY', sauve.m], ['GEMINI_API_KEY', sauve.c]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
+  await test('Gemini : ordre Mistral → Gemini → Groq, clé de session, et clé invalide (400) = refusée puis relais', async () => {
+    const ctx = require('../lib/contexte');
+    const ia = require('../lib/ia');
+    const sauve = { fetch: global.fetch, g: process.env.GROQ_API_KEY, m: process.env.MISTRAL_API_KEY, c: process.env.GEMINI_API_KEY, o: process.env.IA_ORDRE };
+    try {
+      delete process.env.IA_ORDRE; delete process.env.MISTRAL_API_KEY; process.env.GROQ_API_KEY = 'gsk_hebergeur_cccccccc'; delete process.env.GEMINI_API_KEY;
+      const reglages = ctx.nettoyer({ mode: 'private', ia: { gemini: 'AIzaSyAAAAAAAAAAAAAAAAAAAA' } });
+      assert.deepStrictEqual(reglages.CLES_IA, { gemini: 'AIzaSyAAAAAAAAAAAAAAAAAAAA' });
+      const vues = [];
+      global.fetch = async (url, init) => { vues.push(String(url).split('/')[2] + ' ' + init.headers.Authorization); return String(url).includes('googleapis') && vues.length === 1 ? { ok: false, status: 400, text: async () => 'API key not valid', headers: { get: () => null } } : { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }], data: [] }), headers: { get: () => null } }; };
+      const r = await ctx.executer(reglages, () => ia.repondre([{ role: 'user', content: 'salut' }]));
+      assert.strictEqual(r.texte, 'ok');
+      assert.ok(vues.some((v) => v.startsWith('generativelanguage.googleapis.com Bearer AIza')), 'Gemini essaye avec la clé du site : ' + vues.join(' | '));
+      assert.ok(vues[vues.length - 1].startsWith('api.groq.com'), 'puis Groq prend le relais : ' + vues.join(' | '));
+    } finally {
+      global.fetch = sauve.fetch;
+      for (const [k, v] of [['GROQ_API_KEY', sauve.g], ['MISTRAL_API_KEY', sauve.m], ['GEMINI_API_KEY', sauve.c], ['IA_ORDRE', sauve.o]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     }
   });
 
