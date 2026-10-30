@@ -5,9 +5,9 @@ const logos = require('../lib/logos');
 const renommage = require('../lib/renommage.json');
 const { messageCite, extraireTexte, numero } = require('../lib/utils');
 
-// Anciens noms (OVL) → alias, pour que les habitués retrouvent leurs commandes
+// Anciens noms (OVL) → alias, seulement si ANCIENS_NOMS=oui
 const anciens = {};
-for (const [ancien, nouveau] of Object.entries(renommage)) if (ancien !== nouveau) (anciens[nouveau] ||= []).push(ancien);
+if (require('../lib/nomsanciens')()) for (const [ancien, nouveau] of Object.entries(renommage)) if (ancien !== nouveau) (anciens[nouveau] ||= []).push(ancien);
 
 const cooldown = new Map();
 

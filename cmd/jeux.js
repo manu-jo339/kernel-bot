@@ -65,13 +65,13 @@ module.exports = [
       const j = etat(jid);
       const tag = (n) => '@' + numero(n);
       if (sous === 'jouer' || sous === 'start') {
-        if (j) return reply(`🎲 Une partie est déjà en cours. ${p}av joueurs · ${p}av stop`);
+        if (j) return reply(`🎲 Une partie est déjà en cours. ${p}actionverite joueurs · ${p}actionverite stop`);
         store.set('av', jid, { joueurs: [sender], actuel: null, ts: Date.now() });
-        return reply(`🎲 *Action ou Vérité* est lancé par ${tag(sender)} !\nTape *${p}av rejoindre* pour participer. Quand vous êtes au moins 2, tape *${p}av suivant* pour tirer au sort la première victime. 😈\n_Jeu entre amis : on reste respectueux, on peut toujours ${p}av passer._`);
+        return reply(`🎲 *Action ou Vérité* est lancé par ${tag(sender)} !\nTape *${p}actionverite rejoindre* pour participer. Quand vous êtes au moins 2, tape *${p}actionverite suivant* pour tirer au sort la première victime. 😈\n_Jeu entre amis : on reste respectueux, on peut toujours ${p}actionverite passer._`);
       }
-      if (!j) return reply(`🎲 *Action ou Vérité*\n${p}av jouer — lancer une partie\nPuis : rejoindre · suivant · action · verite · passer · joueurs · stop`);
+      if (!j) return reply(`🎲 *Action ou Vérité*\n${p}actionverite jouer — lancer une partie\nPuis : rejoindre · suivant · action · verite · passer · joueurs · stop`);
       const exp = Date.now() - j.ts > 6 * 3600e3;
-      if (exp) { store.del('av', jid); return reply(`🎲 La partie était terminée (inactive depuis longtemps). Relance avec ${p}av jouer.`); }
+      if (exp) { store.del('av', jid); return reply(`🎲 La partie était terminée (inactive depuis longtemps). Relance avec ${p}actionverite jouer.`); }
       switch (sous) {
         case 'rejoindre': case 'join': {
           if (j.joueurs.some((x) => numero(x) === senderNum)) return reply('Tu es déjà dans la partie 😉');
@@ -87,22 +87,22 @@ module.exports = [
         case 'joueurs': case 'liste':
           return reply(`🎲 *Joueurs (${j.joueurs.length})*\n${j.joueurs.map(tag).join('\n') || '—'}${j.actuel ? `\n\nÀ qui le tour : ${tag(j.actuel)}` : ''}`);
         case 'suivant': case 'next': {
-          if (j.joueurs.length < 2) return reply(`Il faut au moins 2 joueurs. ${p}av rejoindre`);
+          if (j.joueurs.length < 2) return reply(`Il faut au moins 2 joueurs. ${p}actionverite rejoindre`);
           const autres = j.joueurs.filter((x) => numero(x) !== numero(j.actuel || ''));
           j.actuel = tirer(autres); j.ts = Date.now(); store.set('av', jid, j);
-          return reply(`🎯 C’est le tour de ${tag(j.actuel)} !\nChoisis : *${p}av action* ou *${p}av verite*`);
+          return reply(`🎯 C’est le tour de ${tag(j.actuel)} !\nChoisis : *${p}actionverite action* ou *${p}actionverite verite*`);
         }
         case 'action': case 'verite': case 'vérité': {
-          if (!j.actuel) return reply(`Tape d’abord ${p}av suivant.`);
+          if (!j.actuel) return reply(`Tape d’abord ${p}actionverite suivant.`);
           if (numero(j.actuel) !== senderNum && !isAdmin && !isOwner) return reply(`⏳ Ce n’est pas ton tour, c’est celui de ${tag(j.actuel)}.`);
           const action = sous === 'action';
           j.ts = Date.now(); store.set('av', jid, j);
-          return reply(`${action ? '🔥 *ACTION*' : '💭 *VÉRITÉ*'} pour ${tag(j.actuel)} :\n\n${tirer(action ? ACTIONS : VERITES)}\n\n_Quand c’est fait : ${p}av suivant · pas envie : ${p}av passer_`);
+          return reply(`${action ? '🔥 *ACTION*' : '💭 *VÉRITÉ*'} pour ${tag(j.actuel)} :\n\n${tirer(action ? ACTIONS : VERITES)}\n\n_Quand c’est fait : ${p}actionverite suivant · pas envie : ${p}actionverite passer_`);
         }
         case 'passer': case 'skip': {
           if (j.actuel && numero(j.actuel) !== senderNum && !isAdmin && !isOwner) return reply('⏳ Seuls le joueur concerné ou un admin peuvent passer.');
           j.actuel = null; store.set('av', jid, j);
-          return reply(`⏭️ Tour passé. ${p}av suivant pour tirer le prochain joueur.`);
+          return reply(`⏭️ Tour passé. ${p}actionverite suivant pour tirer le prochain joueur.`);
         }
         case 'stop': case 'fin': {
           if (numero(j.joueurs[0] || '') !== senderNum && !isAdmin && !isOwner) return reply('⛔ Seul celui qui a lancé la partie ou un admin peut l’arrêter.');
@@ -110,7 +110,7 @@ module.exports = [
           return reply('🏁 Partie terminée. Merci d’avoir joué ! Relance quand tu veux avec ' + p + 'av jouer.');
         }
         default:
-          return reply(`🎲 ${p}av jouer · rejoindre · suivant · action · verite · passer · joueurs · quitter · stop`);
+          return reply(`🎲 ${p}actionverite jouer · rejoindre · suivant · action · verite · passer · joueurs · quitter · stop`);
       }
     },
   },

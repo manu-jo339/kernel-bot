@@ -333,6 +333,62 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.deepStrictEqual(ecrites.sort(), ['creds', 'session-a.0']);
   });
 
+  await test('vues uniques et statuts : gardés après un redémarrage (écrits dans la session, relus au démarrage), sans miniature ; messages ordinaires ignorés', async () => {
+    const { creer, genre } = require('../lib/conserve');
+    const cache = require('../lib/cache');
+    const statuts = require('../lib/statuts');
+    const { BufferJSON } = require('@whiskeysockets/baileys');
+    const disque = new Map(); // simule la session enregistrée (JSON comme dans Supabase / le site)
+    const cles = {
+      get: async (type, ids) => Object.fromEntries(ids.map((id) => [id, disque.has(type + '-' + id) ? JSON.parse(disque.get(type + '-' + id), BufferJSON.reviver) : null])),
+      set: async (data) => { for (const t in data) for (const id in data[t]) disque.set(t + '-' + id, JSON.stringify(data[t][id], BufferJSON.replacer)); },
+    };
+    const cle = Buffer.from('clé-secrète-de-test-0123456789ab');
+    const vue = { key: { remoteJid: '242061111111@s.whatsapp.net', id: 'VUE1' }, messageTimestamp: 1, message: { viewOnceMessageV2: { message: { imageMessage: { mediaKey: cle, directPath: '/v/x', jpegThumbnail: Buffer.alloc(500), viewOnce: true } } } } };
+    const statut = { key: { remoteJid: 'status@broadcast', id: 'ST1', participant: '242062222222@s.whatsapp.net' }, messageTimestamp: 2, message: { videoMessage: { mediaKey: cle, directPath: '/v/y' } } };
+    const normal = { key: { remoteJid: '242061111111@s.whatsapp.net', id: 'N1' }, message: { imageMessage: { mediaKey: cle } } };
+    const texte = { key: { remoteJid: '242061111111@s.whatsapp.net', id: 'T1' }, message: { conversation: 'salut' } };
+    assert.strictEqual(genre(vue), 'vue unique');
+    assert.strictEqual(genre(statut), 'statut');
+    assert.strictEqual(genre(normal), null, 'une image ordinaire n’est pas gardée (sa citation garde sa clé)');
+    assert.strictEqual(genre(texte), null);
+    const a = creer(cles, 5);
+    for (const m of [vue, statut, normal, texte]) a.noter(m);
+    assert.strictEqual(a.taille(), 2);
+    assert.strictEqual(await a.sauver(), true);
+    assert.strictEqual(await a.sauver(), false, 'rien de nouveau : pas de réécriture');
+    // « redémarrage » : mémoire vidée, nouvelle instance qui relit la session
+    cache.lire('VUE1'); statuts.retrouver('ST1');
+    const b = creer(cles, 5);
+    assert.strictEqual(await b.charger(), 2);
+    const rl = cache.lire('VUE1');
+    assert.ok(rl && Buffer.isBuffer(rl.message.viewOnceMessageV2.message.imageMessage.mediaKey), 'clé de déchiffrement relue en binaire');
+    assert.ok(rl.message.viewOnceMessageV2.message.imageMessage.mediaKey.equals(cle));
+    assert.strictEqual(rl.message.viewOnceMessageV2.message.imageMessage.jpegThumbnail, undefined, 'miniature retirée');
+    assert.ok(statuts.retrouver('ST1'));
+    // jamais plus de 80, et les plus anciens d’abord
+    const c = creer(cles, 5);
+    for (let i = 0; i < 95; i++) c.noter({ ...vue, key: { ...vue.key, id: 'V' + i } });
+    assert.strictEqual(c.taille(), 80);
+  });
+
+  await test('présence : le bot ne reste jamais « en ligne » (notifications du téléphone), sauf réglage explicite', async () => {
+    const { gardienPresence } = require('../lib/session');
+    const reglages = require('../lib/reglages');
+    const envoyes = [];
+    const sock = { sendPresenceUpdate: async (t, j) => { envoyes.push(t); } };
+    gardienPresence(sock, { sock, ouverte: true });
+    await sock.sendPresenceUpdate('available');
+    assert.deepStrictEqual(envoyes, [], '« en ligne » bloqué par défaut');
+    await sock.sendPresenceUpdate('composing', 'x@s.whatsapp.net');
+    assert.deepStrictEqual(envoyes, ['composing']);
+    await new Promise((ok) => setTimeout(ok, 6300));
+    assert.deepStrictEqual(envoyes, ['composing', 'unavailable'], 'retour « hors ligne » après avoir écrit');
+    reglages.ecrire({ presenceMode: 'enligne' });
+    try { await sock.sendPresenceUpdate('available'); assert.strictEqual(envoyes[envoyes.length - 1], 'available', 'réglage explicite respecté'); }
+    finally { reglages.ecrire({ presenceMode: 'aucune' }); }
+  });
+
   await test('nom d’utilisateur du site : lu dans la base, assaini, affiché dans le menu et l’accueil (jamais « Propriétaire »)', async () => {
     const auth = require('../lib/auth_supabase');
     const { chargerUtilisateur, assainirNom } = require('../lib/session');

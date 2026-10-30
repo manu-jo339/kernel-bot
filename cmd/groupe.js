@@ -72,7 +72,7 @@ module.exports = [
       const membres = metadata.participants.map((p) => p.id);
       const cite = messageCite(msg);
       const texte = args.join(' ') || cite?.message?.conversation || cite?.message?.extendedTextMessage?.text;
-      if (!texte) return reply('✏️ Écris un message : `.tag ton message` (ou réponds à un message).');
+      if (!texte) return reply('✏️ Écris un message : `.prevenir ton message` (ou réponds à un message).');
       await sock.sendMessage(jid, { text: texte, mentions: membres });
     },
   },
@@ -81,11 +81,11 @@ module.exports = [
   {
     ...base,
     name: 'poll',
-    desc: 'Sondage à choix multiples — .poll Question | choix 1 | choix 2',
+    desc: 'Sondage à choix multiples — .sondage Question | choix 1 | choix 2',
     adminOnly: true,
     run: async ({ sock, jid, texte, config, reply }) => {
       const parts = texte.slice(config.PREFIXE.length).replace(/^\S+\s*/, '').split('|').map((x) => x.trim()).filter(Boolean);
-      if (parts.length < 3) return reply('📊 Format : `.poll Question | choix 1 | choix 2 | …`');
+      if (parts.length < 3) return reply('📊 Format : `.sondage Question | choix 1 | choix 2 | …`');
       const [question, ...choix] = parts;
       await sock.sendMessage(jid, { poll: { name: question, values: choix.slice(0, 12), selectableCount: choix.length } });
     },
@@ -93,11 +93,11 @@ module.exports = [
   {
     ...base,
     name: 'poll2',
-    desc: 'Sondage à vote unique — .poll2 Question | choix 1 | choix 2',
+    desc: 'Sondage à vote unique — .sondageunique Question | choix 1 | choix 2',
     adminOnly: true,
     run: async ({ sock, jid, texte, config, reply }) => {
       const parts = texte.slice(config.PREFIXE.length).replace(/^\S+\s*/, '').split('|').map((x) => x.trim()).filter(Boolean);
-      if (parts.length < 3) return reply('📊 Format : `.poll2 Question | choix 1 | choix 2 | …`');
+      if (parts.length < 3) return reply('📊 Format : `.sondageunique Question | choix 1 | choix 2 | …`');
       const [question, ...choix] = parts;
       await sock.sendMessage(jid, { poll: { name: question, values: choix.slice(0, 12), selectableCount: 1 } });
     },
@@ -124,13 +124,13 @@ module.exports = [
   {
     ...base,
     name: 'kickall',
-    desc: 'Exclut tous les non-admins — à confirmer avec : .kickall oui',
+    desc: 'Exclut tous les non-admins — à confirmer avec : .expulsertous oui',
     adminOnly: true,
     botAdmin: true,
     run: async ({ sock, jid, args, metadata, reply, config }) => {
       const cibles_ = exclusPossibles(metadata, sock, config);
       if (args[0]?.toLowerCase() !== 'oui')
-        return reply(`⚠️ Cette commande exclura *${cibles_.length}* membres (tous sauf les admins).\nPour confirmer : \`${config.PREFIXE}kickall oui\``);
+        return reply(`⚠️ Cette commande exclura *${cibles_.length}* membres (tous sauf les admins).\nPour confirmer : \`${config.PREFIXE}expulsertous oui\``);
       await reply(`⏳ Exclusion de ${cibles_.length} membres en cours…`);
       const ok = await retirerParLots(sock, jid, cibles_.map((p) => p.id));
       await reply(`✅ ${ok} membre(s) exclu(s).`);
@@ -139,15 +139,15 @@ module.exports = [
   {
     ...base,
     name: 'ckick',
-    desc: 'Exclut les membres d’un indicatif — .ckick 242 oui',
+    desc: 'Exclut les membres d’un indicatif — .expulserpays 242 oui',
     adminOnly: true,
     botAdmin: true,
     run: async ({ sock, jid, args, metadata, reply, config }) => {
       const indicatif = (args[0] || '').replace(/\D/g, '');
-      if (!indicatif) return reply(`🌍 Format : \`${config.PREFIXE}ckick 242\` (indicatif du pays), puis ajoute \`oui\` pour confirmer.`);
+      if (!indicatif) return reply(`🌍 Format : \`${config.PREFIXE}expulserpays 242\` (indicatif du pays), puis ajoute \`oui\` pour confirmer.`);
       const visees = exclusPossibles(metadata, sock, config).filter((p) => (numeroDe(p) || '').startsWith(indicatif));
       if (args[1]?.toLowerCase() !== 'oui')
-        return reply(`⚠️ ${visees.length} membre(s) avec l’indicatif +${indicatif} seraient exclus.\nPour confirmer : \`${config.PREFIXE}ckick ${indicatif} oui\``);
+        return reply(`⚠️ ${visees.length} membre(s) avec l’indicatif +${indicatif} seraient exclus.\nPour confirmer : \`${config.PREFIXE}expulserpays ${indicatif} oui\``);
       const ok = await retirerParLots(sock, jid, visees.map((p) => p.id));
       await reply(`✅ ${ok} membre(s) exclu(s).`);
     },
@@ -190,7 +190,7 @@ module.exports = [
     botAdmin: true,
     run: async ({ sock, jid, args, reply }) => {
       const nom = args.join(' ').trim();
-      if (!nom) return reply('✏️ Format : `.gname Nouveau nom`');
+      if (!nom) return reply('✏️ Format : `.nomgroupe Nouveau nom`');
       await sock.groupUpdateSubject(jid, nom);
       await reply('✅ Nom du groupe modifié.');
     },
@@ -203,7 +203,7 @@ module.exports = [
     botAdmin: true,
     run: async ({ sock, jid, args, reply }) => {
       const d = args.join(' ').trim();
-      if (!d) return reply('✏️ Format : `.gdesc Nouvelle description`');
+      if (!d) return reply('✏️ Format : `.descgroupe Nouvelle description`');
       await sock.groupUpdateDescription(jid, d);
       await reply('✅ Description modifiée.');
     },
@@ -344,7 +344,7 @@ module.exports = [
     botAdmin: true,
     run: async ({ sock, jid, msg, reply }) => {
       const cite = messageCite(msg);
-      if (!cite?.message?.imageMessage) return reply('🖼️ Réponds à une image avec `.updatepp`.');
+      if (!cite?.message?.imageMessage) return reply('🖼️ Réponds à une image avec `.changerphoto`.');
       const buffer = await downloadMediaMessage(
         { key: { remoteJid: jid, id: cite.stanzaId, participant: cite.participant }, message: cite.message },
         'buffer',
@@ -399,11 +399,11 @@ module.exports = [
   {
     categorie: 'Groupe',
     name: 'gcreate',
-    desc: 'Crée un groupe — .gcreate Nom du groupe',
+    desc: 'Crée un groupe — .creergroupe Nom du groupe',
     ownerOnly: true,
     run: async ({ sock, args, reply }) => {
       const nom = args.join(' ').trim();
-      if (!nom) return reply('✏️ Format : `.gcreate Nom du groupe`');
+      if (!nom) return reply('✏️ Format : `.creergroupe Nom du groupe`');
       const g = await sock.groupCreate(nom, []);
       await reply(`✅ Groupe « ${g.subject} » créé.`);
     },
@@ -415,7 +415,7 @@ module.exports = [
     ownerOnly: true,
     run: async ({ sock, args, reply }) => {
       const m = (args[0] || '').match(/chat\.whatsapp\.com\/([A-Za-z0-9]+)/);
-      if (!m) return reply('🔗 Format : `.join https://chat.whatsapp.com/xxxxx`');
+      if (!m) return reply('🔗 Format : `.rejoindre https://chat.whatsapp.com/xxxxx`');
       await sock.groupAcceptInvite(m[1]);
       await reply('✅ Groupe rejoint.');
     },

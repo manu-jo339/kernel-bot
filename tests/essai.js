@@ -47,7 +47,10 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     for (const n of ['expulser', 'tous', 'bannir', 'antilien', 'avertir', 'bienvenue', 'menu', 'aide', 'toutmenu', 'proprietaire', 'createur', 'redemarrer', 'connecter', 'liersticker', 'enmarche', 'etatsysteme', 'vueunique', 'rang', 'classement', 'profil', 'antimention', 'antimentiongroupe', 'antipromotion', 'lireauto'])
       assert(handler.commands.has(n), 'manque ' + n);
   });
-  await test('anciens noms gardés comme alias', () => { assert(handler.commands.get('kick') === handler.commands.get('expulser')); });
+  await test('nos noms seulement : les anciens noms (style OVL) ne sont plus reconnus par défaut', () => {
+    for (const a of ['kick', 'tagall', 'antidelete', 'welcome', 'allmenu']) assert(!handler.commands.has(a), a + ' ne doit plus exister');
+    assert(handler.commands.has('expulser') && handler.commands.has('antisuppression') && handler.commands.has('bienvenue'));
+  });
   await test('menu accueil et catégorie', async () => {
     const rep = await dire(MEMBRE, '.menu');
     const im0 = rep.find((x) => x.c.image);
@@ -66,9 +69,9 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(!aImage(await dire(MEMBRE, '.ping')), 'ping sans image');
     assert(!aImage(await dire(MEMBRE, '.toutmenu')), 'toutmenu sans image');
     assert(!aImage(await dire(MEMBRE, '.aide ping')), 'aide sans image');
-    assert(aImage(await dire(MEMBRE, '.info')) && aImage(await dire(MEMBRE, '.uptime')) && aImage(await dire(PROP, '.system_status')), 'info/uptime/système avec image');
+    assert(aImage(await dire(MEMBRE, '.info')) && aImage(await dire(MEMBRE, '.enmarche')) && aImage(await dire(PROP, '.etatsysteme')), 'info/uptime/système avec image');
     const vues = new Set();
-    for (let i = 0; i < 12; i++) vues.add(require('crypto').createHash('md5').update((await dire(MEMBRE, '.uptime')).find((x) => x.c.image).c.image).digest('hex'));
+    for (let i = 0; i < 12; i++) vues.add(require('crypto').createHash('md5').update((await dire(MEMBRE, '.enmarche')).find((x) => x.c.image).c.image).digest('hex'));
     assert(vues.size === 10, 'dix images différentes en boucle : ' + vues.size);
   });
   await test('utilisateur : nom du .env dans le menu, jamais le numéro', async () => {
@@ -131,7 +134,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     } finally { srv.close(); delete process.env.PORT; }
   });
   await test('développeur : fiche et contact', async () => {
-    const rep = await dire(MEMBRE, '.developpeur');
+    const rep = await dire(MEMBRE, '.createur');
     const t = rep.map((x) => x.c.caption || x.c.text || '').join('\n');
     assert(/Emmanuel TSINGAMBIA/.test(t) && /242056233409/.test(t) && /République du Congo/.test(t) && /MWENOBANGUE Labs/.test(t), t);
     assert(rep.some((x) => x.c.contacts), 'contact envoyé');
@@ -140,11 +143,13 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     const an = require('../lib/anciens');
     const M = (id, ts) => ({ key: { remoteJid: MEMBRE, id }, messageTimestamp: ts });
     const debut = 1000000;
-    assert(an.verifier('t', M('A1', debut + 10), debut) === null, 'nouveau message accepté');
-    assert(an.verifier('t', M('A1', debut + 10), debut) === 'déjà traité', 'doublon (même après redémarrage)');
-    assert(an.verifier('t', M('A2', debut + 5), debut), 'plus ancien que le dernier traité');
-    assert(an.verifier('t', M('A3', debut - 600), debut), 'avant le démarrage');
-    assert(an.verifier('t', { key: { remoteJid: MEMBRE, id: 'A4' }, messageTimestamp: { low: debut + 11, high: 0 } }, debut) === null, 'timestamp Long accepté');
+    assert(an.verifier('t', M('A1', debut + 10), debut, debut + 30) === null, 'nouveau message accepté');
+    assert(an.verifier('t', M('A1', debut + 10), debut, debut + 30) === 'déjà traité', 'doublon (même après redémarrage)');
+    assert(an.verifier('t', M('A2', debut + 5), debut, debut + 30), 'plus ancien que le dernier traité');
+    assert(an.verifier('t', M('A3', debut - 600), debut, debut + 30), 'avant le démarrage');
+    assert(an.verifier('t', { key: { remoteJid: MEMBRE, id: 'A4' }, messageTimestamp: { low: debut + 11, high: 0 } }, debut, debut + 30) === null, 'timestamp Long accepté');
+    assert(/plus de 90 s/.test(an.verifier('t', M('A5', debut + 100), debut, debut + 300)), 'tapé il y a plus de 90 s : ignoré');
+    assert(an.verifier('t', M('A6', debut + 200), debut, debut + 240) === null, 'tapé il y a 40 s (petite coupure) : traité');
   });
   await test('réaction sur chaque commande : ⏳ puis ✅ (❌ en cas d’erreur)', async () => {
     reactions.length = 0;
@@ -176,7 +181,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(suivis.length === 1 && suivis[0] === '120363@newsletter', 'suivi seulement sur demande');
     config.CHAINE_URL = '';
   });
-  await test('aide d’une commande', async () => { assert(/expulser/.test(texteDe(await dire(MEMBRE, '.aide kick')))); });
+  await test('aide d’une commande', async () => { assert(/expulser/.test(texteDe(await dire(MEMBRE, '.aide expulser')))); });
   await test('thème (propriétaire seulement)', async () => {
     assert(/réservée/i.test(texteDe(await dire(MEMBRE, '.theme moderne'))));
     assert(/Moderne/.test(texteDe(await dire(PROP, '.theme moderne'))));
@@ -223,7 +228,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(/Salut/.test(texteDe(await dire(ADMIN, '.bienvenue test'))));
   });
   await test('antipromotion annule une promotion par un tiers', async () => {
-    await dire(ADMIN, '.antipromote on');
+    await dire(ADMIN, '.antipromotion on');
     envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'promote', author: ADMIN });
     assert(envoyes.some((x) => x.c.action === 'demote'));
     envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'promote', author: PROP });
@@ -294,11 +299,11 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     // origine reçue et gardée en mémoire, avec sa clé
     const origine = { key: { remoteJid: PROP, id: 'ORIG1', participant: MEMBRE }, message: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } } } };
     cache.ajouter(origine);
-    const trouve = utils.messageMedia(citation('ORIG1', '.vv'));
+    const trouve = utils.messageMedia(citation('ORIG1', '.vueunique'));
     assert(trouve && trouve.key.id === 'ORIG1' && trouve.type === 'imageMessage', 'reprend le message d’origine');
     // origine inconnue : le bot l’explique au lieu d’un message d’erreur vague
     envoyes.length = 0;
-    await handler.traiter(sock, citation('INCONNU', '.vv'));
+    await handler.traiter(sock, citation('INCONNU', '.vueunique'));
     assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
   });
   await test('diagnostic : réservé au propriétaire ; outils + structure ; une commande ; essai à vide qui sépare réussites, silences, erreurs et commandes dangereuses', async () => {
@@ -344,12 +349,20 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert.strictEqual(res.silence.length, 0, 'chaque réaction répond (même si l’animation est indisponible) : ' + res.silence.map((r) => r.nom));
     } finally { global.fetch = fetchAvant; console.error = erreur; if (chemin === undefined) delete process.env.YTDLP_PATH; else process.env.YTDLP_PATH = chemin; }
   });
-  await test('anciens noms OVL : tous mènent à leur commande (ex : antidelete, anticall, levelup)', async () => {
+  await test('ANCIENS_NOMS=oui : les anciens noms mènent à nos commandes (option pour les habitués), puis retour à nos noms seuls', async () => {
     const anciens = require('../lib/renommage.json');
-    const manquants = Object.entries(anciens).filter(([ancien, nouveau]) => handler.commands.has(nouveau) && !handler.commands.has(ancien)).map(([a]) => a);
-    assert.deepStrictEqual(manquants, [], 'anciens noms introuvables : ' + manquants.join(', '));
-    assert.strictEqual(handler.commands.get('antidelete'), handler.commands.get('antisuppression'));
-    assert.strictEqual(handler.commands.get('anticall'), handler.commands.get('antiappel'));
+    process.env.ANCIENS_NOMS = 'oui';
+    try {
+      handler.chargerCommandes();
+      const manquants = Object.entries(anciens).filter(([ancien, nouveau]) => handler.commands.has(nouveau) && !handler.commands.has(ancien)).map(([a]) => a);
+      assert.deepStrictEqual(manquants, [], 'anciens noms introuvables : ' + manquants.join(', '));
+      assert.strictEqual(handler.commands.get('antidelete'), handler.commands.get('antisuppression'));
+      assert.strictEqual(handler.commands.get('kick'), handler.commands.get('expulser'));
+    } finally {
+      delete process.env.ANCIENS_NOMS;
+      handler.chargerCommandes();
+    }
+    assert(!handler.commands.has('antidelete') && !handler.commands.has('kick'));
   });
   await test('save : le statut d’origine gardé en mémoire est utilisé ; sinon message clair', async () => {
     const statuts = require('../lib/statuts');
@@ -1113,7 +1126,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     delete process.env.TELEGRAM_BOT_TOKEN;
     routes.length = 0;
   });
-  await test('logos : 48 styles, aide, texte trop long, anciens noms, emojis seuls', async () => {
+  await test('logos : 48 styles, aide, texte trop long, emojis seuls', async () => {
     const L = require('../lib/logos');
     assert(L.noms.length === 48);
     for (const nom of L.noms) {
@@ -1125,8 +1138,8 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(/Écris le texte/.test(texteDe(await dire(PROP, '.neon1', false))));
     assert(/trop long/.test(texteDe(await dire(PROP, '.or1 ' + 'a'.repeat(31), false))));
     assert(/sans emojis/.test(texteDe(await dire(PROP, '.or1 😀😀', false))));
-    assert(est(await dire(PROP, '.steel Salut', false), 'image'), 'ancien nom steel');
-    assert(est(await dire(PROP, '.gold1 Éléphant — été', false), 'image'), 'accents');
+    assert(est(await dire(PROP, '.acier Salut', false), 'image'), 'logo acier');
+    assert(est(await dire(PROP, '.or1 Éléphant — été', false), 'image'), 'accents');
     const x1 = est(await dire(PROP, '.galaxie Même', false), 'image').c.image, x2 = est(await dire(PROP, '.galaxie Même', false), 'image').c.image;
     assert(x1.equals(x2), 'rendu stable');
   });
