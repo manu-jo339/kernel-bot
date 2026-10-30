@@ -266,6 +266,19 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(w.journal.base.length, 0);
   }));
 
+  await test('mémoire des messages envoyés : retrouve un message à renvoyer, oublie les plus anciens, ignore les messages sans contenu', async () => {
+    const { creerMemoire } = require('../lib/session');
+    const m = creerMemoire(3);
+    for (const id of ['a', 'b', 'c', 'd']) m.ajouter({ key: { id }, message: { conversation: id } });
+    assert.strictEqual(m.taille(), 3);
+    assert.strictEqual(m.lire('a'), undefined, 'le plus ancien est oublié');
+    assert.deepStrictEqual(m.lire('d'), { conversation: 'd' });
+    m.ajouter({ key: { id: 'e' } });
+    m.ajouter({ key: {}, message: { conversation: 'x' } });
+    assert.strictEqual(m.taille(), 3);
+    assert.strictEqual(m.lire('e'), undefined);
+  });
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();
