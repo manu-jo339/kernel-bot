@@ -213,7 +213,7 @@ Vérification : `npm test` lance les essais automatiques avec un faux WhatsApp e
 Render gratuit efface les fichiers à chaque redémarrage : sans précaution, le bot perdrait sa connexion WhatsApp. La session est donc gardée dans Supabase.
 
 1. **Supabase** : dans *SQL Editor*, exécuter une fois le contenu de `deploy/supabase.sql` (table `kernel_auth`, protégée : seule la clé `service_role` y accède).
-2. **GitHub** : mettre le projet dans un dépôt **privé** (le `.gitignore` exclut déjà `.env`, `auth`, `sessions` et `data`).
+2. **GitHub** : mettre le projet dans ton propre dépôt (le `.gitignore` exclut déjà `.env`, `auth`, `sessions` et `data`). Ce dépôt-ci est public : tu peux aussi le dupliquer avec le bouton **Fork**. Si tu veux seulement un moteur piloté par Kernel Connect, saute cette section et suis la section 18.
 3. **Render** : *New → Web Service → Git Provider*, choisir le dépôt, *Language : Docker* (le `Dockerfile` est fourni), instance *Free*.
 4. **Variables d'environnement** (onglet *Environment*, jamais dans le code) :
    `NUMERO_BOT`, `NUMERO_OWNER`, `NOM_OWNER`, `PREFIXE`, `MODE`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, et les clés du chatbot si besoin.
@@ -247,3 +247,39 @@ Le moteur tient l'état à jour dans Supabase (`instances`, `instance_events`, `
 **Moteur seul** : avec `PRINCIPAL=non`, le service ne lance aucun bot principal. Il n'affiche donc aucun code dans les logs de Render : les codes ne sont montrés que sur le site, à l'utilisateur concerné.
 
 Au redémarrage, toutes les sessions appairées enregistrées dans Supabase sont relancées (jusqu'à `MAX_SESSIONS`). **Sur Render gratuit (512 Mo), garde `MAX_SESSIONS=2`** : chaque session WhatsApp consomme de la mémoire, et le bot principal en prend déjà une part. Quand la limite est atteinte, le site affiche « moteur complet ».
+
+
+## 18. Mon propre moteur : mon bot sur mon Render, piloté depuis Kernel Connect
+
+Tu veux utiliser Kernel Connect (le site) sans passer par le serveur de son propriétaire ? Tu héberges toi-même le moteur sur ton compte Render gratuit, et le site le pilote : création des instances, code d'appairage, état, déconnexion. **Tu n'as besoin d'aucune base de données** : la session WhatsApp et l'état sont gardés par le site, et ce moteur ne détient aucune clé de base.
+
+Ce qu'il te faut : un compte sur le site Kernel Connect, un compte gratuit sur Render, un compte GitHub. Compte environ 15 minutes.
+
+**Étape 1 : choisir ton secret.** C'est un mot de passe long (au moins 16 caractères, 32 conseillés) qui sert à signer les échanges entre ton moteur et le site. Génère-le avec `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`, ou avec n'importe quel gestionnaire de mots de passe. Garde-le : tu le saisiras deux fois (Render, puis le site). Ne le partage avec personne et ne l'écris dans aucun fichier du dépôt.
+
+**Étape 2 : créer le service sur Render.**
+1. Render → *New* → *Web Service*.
+2. Source : ce dépôt (champ *Public Git Repository*, ou ton fork).
+3. *Language* : **Docker** (le `Dockerfile` est fourni). *Instance type* : **Free**.
+4. Dans *Environment*, ajoute deux variables, et seulement elles :
+   - `SITE_URL` = l'adresse https du site Kernel Connect (par exemple `https://kernel-connect.vercel.app`, sans `/` à la fin) ;
+   - `ENGINE_SECRET` = le secret de l'étape 1.
+   `MAX_SESSIONS=2` est la valeur par défaut conseillée sur l'offre gratuite (512 Mo de mémoire).
+5. *Create Web Service* et attends que le service soit **Live**. Note son adresse (elle se termine par `.onrender.com`).
+
+L'adresse publique est détectée toute seule sur Render. Dans les logs tu dois voir « Mode site : ce moteur est relié à Kernel Connect ». Avant l'étape 3 tu peux voir un message « le site refuse ce moteur » : c'est normal, il ne te connaît pas encore.
+
+**Étape 3 : l'enregistrer sur le site.**
+1. Connecte-toi à Kernel Connect → menu **Mon moteur**.
+2. Saisis un nom, l'adresse Render et le même secret, puis *Enregistrer*.
+3. Le site appelle ton moteur avec une signature pour vérifier que tout est bon. S'il répond « en ligne », c'est fini. Sinon, vérifie que le service Render est bien Live, l'adresse (exactement la même), et le secret (même valeur des deux côtés).
+
+**Étape 4 : créer ta première instance.** *Mes instances* → *Nouvelle instance* → choisis **Mon moteur** → saisis ton numéro WhatsApp → le site affiche le code d'appairage. Dans WhatsApp : *Appareils connectés* → *Connecter un appareil* → *Connecter avec un numéro de téléphone*, puis saisis le code. Le code n'apparaît jamais dans les logs de Render.
+
+**Bon à savoir**
+- Le bot ne tourne que pour les instances créées depuis le site : il n'y a pas de bot principal sur ce moteur.
+- Ta session WhatsApp survit aux redémarrages de Render, car elle est gardée par le site. En revanche, les données locales du bot (avertissements, niveaux, réglages…) repartent à zéro à chaque redémarrage sur l'offre gratuite.
+- Le service gratuit s'endort après environ 15 minutes sans visite ; le bot s'appelle lui-même pour rester éveillé. Un service de ping externe (par exemple UptimeRobot, sur l'adresse racine du service) peut aider.
+- Les mises à jour : *Manual Deploy → Deploy latest commit* sur Render, ou active le déploiement automatique si tu utilises ton propre fork.
+- Sécurité : le site ne communique qu'avec des adresses `https://….onrender.com`. Ton moteur ne peut toucher qu'à **tes** instances ; il ne voit ni celles des autres moteurs, ni celles du moteur partagé. Et inversement, le site n'utilise ton secret que pour ton moteur.
+- Un compte qui n'a pas reçu le droit au moteur partagé ne peut créer des instances que sur son propre moteur.
