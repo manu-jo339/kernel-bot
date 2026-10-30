@@ -1208,6 +1208,12 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     route(/exemple\.test\/s\.webp/, async () => rBuf(await sharpT(png).webp().toBuffer(), 'image/webp'));
     const ss = est(await dire(MEMBRE, '.chercherstickers chat'), 'sticker');
     assert(ss && ss.c.sticker.slice(0, 4).toString() === 'RIFF');
+    // clé refusée par GIPHY / limite atteinte : messages précis, et la clé n'apparaît jamais dans la réponse
+    route(/api\.giphy\.com/, () => rJson({}, 403));
+    assert(/refuse la clé/.test(texteDe(await dire(MEMBRE, '.chercherstickers chat'))));
+    assert(!texteDe(await dire(MEMBRE, '.chercherstickers chat')).includes('cle_giphy_1234567890'));
+    route(/api\.giphy\.com/, () => rJson({}, 429));
+    assert(/Limite horaire/.test(texteDe(await dire(MEMBRE, '.chercherstickers chat'))));
     delete process.env.GIPHY_API_KEY;
     routes.length = 0;
   });

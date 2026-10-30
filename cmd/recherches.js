@@ -363,7 +363,10 @@ module.exports = [
           } catch {}
         }
         if (envoyes) await reply('🔎 Stickers : GIPHY');
-      } catch {
+      } catch (e) {
+        console.log(`[giphy] échec : ${e.statut ? 'HTTP ' + e.statut : String(e.message || e).slice(0, 80)}`);
+        if (e.statut === 401 || e.statut === 403) return reply('⚠️ GIPHY refuse la clé de ce bot : le propriétaire doit la vérifier (developers.giphy.com).');
+        if (e.statut === 429) return reply('⏳ Limite horaire de GIPHY atteinte (100 recherches par heure pour tout le bot). Réessaie dans quelques minutes.');
         await indisponible(reply);
       }
     },
