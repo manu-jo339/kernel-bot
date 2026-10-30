@@ -249,6 +249,24 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert((await dire(MEMBRE, '.test')).length > 0);
     config.MODE = 'public';
   });
+  await test('session supplémentaire : le titulaire utilise son bot en mode privé (même en « moi-même » @lid), sans droits de propriétaire', async () => {
+    const mk = (num) => Object.assign(Object.create(sock), { secondaire: true, user: { id: num + ':9@s.whatsapp.net' } });
+    const direDe = async (s, texte, extra = {}) => { envoyes.length = 0; await handler.traiter(s, { key: { remoteJid: '999999999@lid', fromMe: true, id: 'S' + ++n, ...extra }, message: { conversation: texte }, pushName: 'Moi', messageTimestamp: 1 }); return envoyes.slice(); };
+    config.MODE = 'private';
+    try {
+      const titulaire = mk('242099000000'); // numéro absent de NUMERO_OWNER
+      assert((await direDe(titulaire, '.ping')).length > 0, 'le titulaire doit pouvoir utiliser les commandes normales');
+      assert(/réservée au propriétaire/i.test(texteDe(await direDe(titulaire, '.bannir 242063333333 test'))), 'mais pas les commandes du propriétaire');
+      assert(!require('../lib/permissions').estBanni('242063333333'));
+      const proprio = mk('242066000000'); // numéro présent dans NUMERO_OWNER
+      assert(!/réservée au propriétaire/i.test(texteDe(await direDe(proprio, '.bannir 242063333333 test'))), 'le propriétaire est reconnu même en @lid');
+      await direDe(proprio, '.debannir 242063333333');
+      // un tiers qui écrit au numéro d'une session supplémentaire reste ignoré en mode privé
+      envoyes.length = 0;
+      await handler.traiter(titulaire, { key: { remoteJid: '242063333333@s.whatsapp.net', fromMe: false, id: 'T' + ++n }, message: { conversation: '.ping' }, pushName: 'Tiers', messageTimestamp: 1 });
+      assert.strictEqual(envoyes.length, 0);
+    } finally { config.MODE = 'public'; }
+  });
   await test('niveaux : passage de niveau', async () => {
     const niv = require('../lib/niveaux');
     require('../lib/store').set('xp', GRP + '|242063333333', { xp: 49, msgs: 1, dernier: 0 });
