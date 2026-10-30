@@ -279,6 +279,13 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       envoyes.length = 0;
       await handler.traiter(moi, { key: { remoteJid: '242063333333@s.whatsapp.net', fromMe: false, id: 'M' + ++n }, message: { conversation: '.bannir 242055555555 test' }, pushName: 'Tiers', messageTimestamp: 1 });
       assert(!require('../lib/permissions').estBanni('242055555555'), 'un tiers n’a aucun droit');
+      // conversation avec soi-même non marquée « envoyé par moi » : numéro normal, puis identifiant masqué @lid de la session
+      const moi2 = Object.assign(Object.create(sock), { secondaire: true, user: { id: '242099000000:17@s.whatsapp.net', lid: '54829904875595:17@lid' } });
+      const depuis = async (s, jidDe, texte) => { envoyes.length = 0; await handler.traiter(s, { key: { remoteJid: jidDe, fromMe: false, id: 'N' + ++n }, message: { conversation: texte }, pushName: 'Moi', messageTimestamp: 1 }); return envoyes.slice(); };
+      assert(!/réservée au propriétaire/i.test(texteDe(await depuis(moi2, '242099000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'mon numéro, sans « fromMe »');
+      assert(!/réservée au propriétaire/i.test(texteDe(await depuis(moi2, '54829904875595@lid', '.bannir 242044444444 test'))), 'mon identifiant masqué, sans « fromMe »');
+      await direDe(moi2, '.debannir 242044444444');
+      assert(!require('../lib/permissions').estBanni('242055555555'));
     } finally { if (avant === undefined) delete process.env.SITE_URL; else process.env.SITE_URL = avant; }
   });
   await test('niveaux : passage de niveau', async () => {
