@@ -372,6 +372,29 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(c.taille(), 80);
   });
 
+  await test('commandes déjà traitées : retenues dans la session, donc ignorées par le programme suivant après un redéploiement', async () => {
+    const { creer } = require('../lib/conserve');
+    const { BufferJSON } = require('@whiskeysockets/baileys');
+    const disque = new Map();
+    const cles = {
+      get: async (type, ids) => Object.fromEntries(ids.map((id) => [id, disque.has(type + '-' + id) ? JSON.parse(disque.get(type + '-' + id), BufferJSON.reviver) : null])),
+      set: async (data) => { for (const t in data) for (const id in data[t]) disque.set(t + '-' + id, JSON.stringify(data[t][id], BufferJSON.replacer)); },
+    };
+    const ancien = creer(cles, 5);
+    await ancien.charger();
+    assert.strictEqual(ancien.dejaVu('a|1'), false);
+    ancien.noterVu('a|1');
+    ancien.noterVu('a|1');
+    await ancien.sauver();
+    const nouveau = creer(cles, 5);
+    await nouveau.charger();
+    assert.strictEqual(nouveau.dejaVu('a|1'), true, 'le nouveau programme sait que la commande a déjà été traitée');
+    assert.strictEqual(nouveau.dejaVu('a|2'), false);
+    for (let i = 0; i < 350; i++) nouveau.noterVu('b|' + i);
+    assert.strictEqual(nouveau.dejaVu('a|1'), false, 'liste bornée à 300');
+    assert.strictEqual(nouveau.dejaVu('b|349'), true);
+  });
+
   await test('présence : le bot ne reste jamais « en ligne » (notifications du téléphone), sauf réglage explicite', async () => {
     const { gardienPresence } = require('../lib/session');
     const reglages = require('../lib/reglages');
