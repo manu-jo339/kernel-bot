@@ -253,6 +253,19 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(vraie.principale(), null);
   });
 
+  await test('fermeture de connexion : 440 (session reprise ailleurs) = arrêt sans nouvelle tentative ; 401 = déconnecté ; 515 = redémarrage ; le reste = on retente', async () => {
+    const { typeFermeture } = require('../lib/session');
+    assert.strictEqual(typeFermeture(440), 'remplacee');
+    assert.strictEqual(typeFermeture(401), 'deconnecte');
+    assert.strictEqual(typeFermeture(515), 'redemarrage');
+    for (const c of [503, 428, 408, 500, undefined]) assert.strictEqual(typeFermeture(c), 'reessayer');
+  });
+
+  await test('session reprise par un autre processus : le moteur n’écrit rien dans la base', () => avec({}, async (w) => {
+    w.session.emettre(ID, 'close', { code: 440, deconnecte: false, remplacee: true });
+    assert.strictEqual(w.journal.base.length, 0);
+  }));
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();
