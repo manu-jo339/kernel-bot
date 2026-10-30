@@ -242,6 +242,17 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(w.journal.lancements.length, 0);
   }));
 
+  await test('PRINCIPAL=non : aucune session principale n’est lancée (pas de code dans les logs)', async () => {
+    const os = require('os'), fs = require('fs'), path = require('path');
+    process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'kernel-moteur-'));
+    process.env.PRINCIPAL = 'non';
+    delete process.env.SUPABASE_URL; delete process.env.SUPABASE_SERVICE_KEY;
+    const vraie = require('../lib/session');
+    await vraie.demarrerTout();
+    assert.strictEqual(vraie.sessions.size, 0);
+    assert.strictEqual(vraie.principale(), null);
+  });
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();
