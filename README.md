@@ -244,4 +244,6 @@ Sécurité : chaque appel porte `X-KC-Timestamp` et `X-KC-Signature` (HMAC-SHA25
 
 Le moteur tient l'état à jour dans Supabase (`instances`, `instance_events`, `pairing_requests`) : appairage en cours, connecté, connexion perdue, déconnecté depuis WhatsApp. Un appairage non terminé au bout de 5 minutes est abandonné.
 
+**Moteur seul** : avec `PRINCIPAL=non`, le service ne lance aucun bot principal. Il n'affiche donc aucun code dans les logs de Render : les codes ne sont montrés que sur le site, à l'utilisateur concerné.
+
 Au redémarrage, toutes les sessions appairées enregistrées dans Supabase sont relancées (jusqu'à `MAX_SESSIONS`). **Sur Render gratuit (512 Mo), garde `MAX_SESSIONS=2`** : chaque session WhatsApp consomme de la mémoire, et le bot principal en prend déjà une part. Quand la limite est atteinte, le site affiche « moteur complet ».
