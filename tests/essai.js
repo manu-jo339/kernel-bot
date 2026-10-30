@@ -1,6 +1,8 @@
 // Essais automatiques avec un faux WhatsApp (aucune connexion réelle) : node tests/essai.js
 const os = require('os'), path = require('path'), fs = require('fs');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'kernel-'));
+// Les essais ne doivent jamais lire le vrai fichier .env de la personne (MODE=private, clés, etc.) : on travaille depuis un dossier vide
+process.chdir(process.env.DATA_DIR);
 process.env.NUMERO_OWNER = '242066000000';
 process.env.NUMERO_BOT = '242061111111';
 process.env.KERNEL_TEST = '1';

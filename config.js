@@ -17,6 +17,8 @@ module.exports = {
   PREFIXE: process.env.PREFIXE || '.',
   MODE: (process.env.MODE || 'public').toLowerCase(),
   NOM_BOT: 'Kernel Bot', // nom officiel : fixe, ni le .env ni une commande ne peuvent le changer
+  // Nom du propriétaire (affiché dans le menu, comme « Owner » dans l'ancien bot) : à renseigner dans .env
+  NOM_OWNER: (process.env.NOM_OWNER || '').trim().slice(0, 30),
   NUMERO_BOT: chiffres(process.env.NUMERO_BOT),
   OWNERS: (process.env.NUMERO_OWNER || '')
     .split(',')

@@ -224,3 +224,24 @@ Render gratuit efface les fichiers à chaque redémarrage : sans précaution, le
 - Le service se met en veille après ~15 min sans visite ; le bot s'appelle lui-même toutes les 10 min via l'adresse publique Render pour rester éveillé (un service de ping externe comme UptimeRobot peut aussi aider).
 - Seule la **session WhatsApp** survit aux redémarrages. Les réglages et données du dossier `data` (avertissements, niveaux, etc.) sont repartis à zéro à chaque redémarrage ; pour les garder il faut un disque persistant (offre payante) ou une synchronisation vers Supabase (prévue plus tard).
 - La page publique du service répond seulement « en ligne » : aucun numéro, aucune session n'y apparaît.
+
+
+## 17. API moteur pour Kernel Connect (le site)
+
+Le site **Kernel Connect** (Vercel) utilise ce bot comme moteur WhatsApp : il lui demande un vrai code d'appairage (ou un QR) pour chaque instance d'un utilisateur. Une instance = une session supplémentaire dont l'identifiant est l'UUID de l'instance.
+
+Activation : définir `ENGINE_SECRET` (au moins 16 caractères, **la même valeur** que dans Vercel), plus `SUPABASE_URL` et `SUPABASE_SERVICE_KEY`. Sans `ENGINE_SECRET`, l'API reste fermée.
+
+| Appel (sur l'adresse publique du service) | Rôle |
+|---|---|
+| `GET /engine/health` | état : sessions en cours, capacité, mémoire |
+| `POST /engine/instances/:id/pair` `{telephone, methode: CODE\|QR}` | lance la session et renvoie `{code}` ou `{qr}` |
+| `POST /engine/instances/:id/disconnect` | déconnecte et efface la session (sans erreur si elle n'existe plus) |
+| `POST /engine/instances/:id/reconnect` | relance une session déjà appairée (404 si inconnue) |
+| `DELETE /engine/instances/:id` | supprime définitivement (404 si inconnue) |
+
+Sécurité : chaque appel porte `X-KC-Timestamp` et `X-KC-Signature` (HMAC-SHA256 de `horodatage.MÉTHODE.chemin.corps`). Un appel non signé, modifié, plus vieux que 60 s ou rejoué est refusé (401). Le code d'appairage n'est jamais écrit dans les logs ni dans les événements.
+
+Le moteur tient l'état à jour dans Supabase (`instances`, `instance_events`, `pairing_requests`) : appairage en cours, connecté, connexion perdue, déconnecté depuis WhatsApp. Un appairage non terminé au bout de 5 minutes est abandonné.
+
+Au redémarrage, toutes les sessions appairées enregistrées dans Supabase sont relancées (jusqu'à `MAX_SESSIONS`). **Sur Render gratuit (512 Mo), garde `MAX_SESSIONS=2`** : chaque session WhatsApp consomme de la mémoire, et le bot principal en prend déjà une part. Quand la limite est atteinte, le site affiche « moteur complet ».

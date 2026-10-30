@@ -59,7 +59,7 @@ module.exports = [
     ...base,
     name: 'regler',
     aliases: ['setvar'],
-    desc: 'Change un réglage sûr du bot : .regler PREFIXE ! · .regler MODE private · .regler NOM_BOT Mon Bot',
+    desc: 'Change un réglage sûr du bot : .regler PREFIXE ! · .regler MODE private',
     run: async ({ args, reply, config, isGroup }) => {
       const P = config.PREFIXE;
       if (!args.length) {

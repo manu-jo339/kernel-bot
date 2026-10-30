@@ -126,8 +126,8 @@ module.exports = [
   },
   {
     ...base,
-    name: 'bienvenue',
-    desc: 'Réaffiche le message de bienvenue',
+    name: 'bienvenuebot',
+    desc: 'Réaffiche le message de bienvenue du bot',
     run: async (ctx) => avecImage(ctx, require('../lib/bienvenue').texte(ctx.liste.length, theme())),
   },
   {

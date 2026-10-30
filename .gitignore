@@ -5,3 +5,7 @@ data
 data_test
 .env
 *.log
+# outils téléchargés par le bot et documents de référence de l'ancien bot : pas dans le dépôt
+bin/
+*.pdf
+liste-commandes-OVL.txt
