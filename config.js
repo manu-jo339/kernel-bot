@@ -25,7 +25,8 @@ module.exports = {
     .map(chiffres)
     .filter(Boolean),
   // Chaîne WhatsApp du projet (assistance) : lien d'invitation, facultatif
-  CHAINE_URL: (process.env.CHAINE_URL || '').trim(),
+  // Chaîne d'assistance proposée dans le message de bienvenue (CHAINE_URL="" pour la retirer). Rien n'est suivi sans que la personne le demande.
+  CHAINE_URL: (process.env.CHAINE_URL === undefined ? 'https://whatsapp.com/channel/0029Vb92uHC84OmJV6r39n41' : process.env.CHAINE_URL).trim(),
   BIENVENUE: (process.env.BIENVENUE || 'oui').toLowerCase() !== 'non',
   SIGNATURE: perso.signature || 'MWENOBANGUE Labs',
   // Contact affiché par la commande « createur »
