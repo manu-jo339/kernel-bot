@@ -70,7 +70,7 @@ module.exports = [
         const actif = sous === 'on';
         db.definirActif(chat, actif);
         if (!actif) return reply('🔕 Chatbot désactivé ici.');
-        if (!bot.iaDisponible()) return reply("✅ Activé, mais aucune clé d'IA n'est configurée dans .env pour le moment.");
+        if (!bot.iaDisponible()) return reply("✅ Activé, mais aucune clé d'IA n'est configurée pour le moment (ajoute-en une sur Kernel Connect (Paramètres > Mon IA)).");
         if (isGroup) {
           await bot.envoyerAvis(ctx.sock, ctx.jid, ctx.msg, true);
           return;

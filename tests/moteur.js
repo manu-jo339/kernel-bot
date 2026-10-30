@@ -538,6 +538,100 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert(/Utilisateur : Josué/.test(b) && !/Propri[ée]taire/i.test(b), b);
   });
 
+  await test('préfixe : emojis acceptés (jusqu’à 3 caractères), lettres, chiffres et espaces refusés', async () => {
+    const ctx = require('../lib/contexte');
+    const aj = require('../lib/ajustements');
+    for (const bon of ['.', '😀', '❤️', '🔥🔥', '👍🏽', '🇨🇬', '😀😀😀']) {
+      assert.strictEqual(ctx.nettoyer({ mode: 'public', prefixe: bon }).PREFIXE, bon, bon);
+      assert.strictEqual(aj.REGLABLES.PREFIXE.valider(bon), bon, bon);
+    }
+    for (const mauvais of ['é', 'ç', '1', 'a', '_', '@', '. ', '😀😀😀😀', '']) {
+      assert.deepStrictEqual(ctx.nettoyer({ mode: 'public', prefixe: mauvais }), { MODE: 'public' }, JSON.stringify(mauvais));
+      assert.strictEqual(aj.REGLABLES.PREFIXE.valider(mauvais), null, JSON.stringify(mauvais));
+    }
+  });
+
+  await test('clés d’IA du site : déchiffrées comme le site les chiffre (v1.iv.tag.données), seulement avec la bonne ENGINES_KEY', async () => {
+    const crypto = require('crypto');
+    const cs = require('../lib/clesite');
+    const cle = Buffer.alloc(32, 7).toString('base64');
+    const chiffrer = (clair, k = cle) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', Buffer.from(k, 'base64'), iv); const d = Buffer.concat([c.update(clair, 'utf8'), c.final()]); return ['v1', iv.toString('base64url'), c.getAuthTag().toString('base64url'), d.toString('base64url')].join('.'); };
+    const v = chiffrer(JSON.stringify({ groq: 'gsk_abcdefghijklmnop', mistral: 'court', inconnu: 'x'.repeat(30), cerebras: 'avec espace 1234567890' }));
+    assert.deepStrictEqual(cs.lire(v, cle), { groq: 'gsk_abcdefghijklmnop' }, 'clés invalides et services inconnus écartés');
+    assert.deepStrictEqual(cs.lire(v, Buffer.alloc(32, 9).toString('base64')), {}, 'mauvaise clé : rien');
+    assert.deepStrictEqual(cs.lire(v, ''), {}, 'ENGINES_KEY absente : rien');
+    assert.deepStrictEqual(cs.lire('n’importe quoi', cle), {});
+    assert.deepStrictEqual(cs.lire(v.slice(0, -3) + 'AAA', cle), {}, 'valeur altérée : rien');
+  });
+
+  await test('clés d’IA du site : propres à la session (jamais mélangées), essayées avant celles de l’hébergeur, et jamais exposées comme réglage', async () => {
+    const ctx = require('../lib/contexte');
+    const config = require('../config');
+    const ia = require('../lib/ia');
+    const sauve = { fetch: global.fetch, g: process.env.GROQ_API_KEY, m: process.env.MISTRAL_API_KEY, c: process.env.CEREBRAS_API_KEY };
+    try {
+      const reglages = ctx.nettoyer({ mode: 'private', ia: { groq: 'gsk_session_aaaaaaaa', mistral: 'nope', autre: 'x'.repeat(30) } });
+      assert.deepStrictEqual(reglages.CLES_IA, { groq: 'gsk_session_aaaaaaaa' });
+      assert.strictEqual(config.CLES_IA, undefined, 'pas un réglage du moteur');
+      assert.strictEqual(ia.cleDeSession('groq'), null, 'hors session : aucune clé');
+      delete process.env.MISTRAL_API_KEY; delete process.env.CEREBRAS_API_KEY; process.env.GROQ_API_KEY = 'gsk_hebergeur_bbbbbbbb';
+      const vues = [];
+      global.fetch = async (url, init) => { vues.push(init.headers.Authorization); return { ok: true, json: async () => ({ choices: [{ message: { content: 'bonjour' } }] }), headers: { get: () => null } }; };
+      const r = await ctx.executer(reglages, () => ia.repondre([{ role: 'user', content: 'salut' }]));
+      assert.strictEqual(r.texte, 'bonjour');
+      assert.strictEqual(vues[0], 'Bearer gsk_session_aaaaaaaa', 'la clé du propriétaire sur le site passe avant celle de l’hébergeur');
+      assert.strictEqual(ctx.executer(reglages, () => ia.apercu().find((x) => x.cle === 'groq').statut), 'prêt');
+      // une autre session, sans clé : celle de l’hébergeur, jamais celle de la première
+      vues.length = 0;
+      await ctx.executer({ MODE: 'private' }, () => ia.repondre([{ role: 'user', content: 'salut' }]));
+      assert.strictEqual(vues[0], 'Bearer gsk_hebergeur_bbbbbbbb');
+      // clé du site refusée : on retombe sur celle de l’hébergeur
+      vues.length = 0;
+      global.fetch = async (url, init) => { vues.push(init.headers.Authorization); return vues.length === 1 ? { ok: false, status: 401, text: async () => 'refusée', headers: { get: () => null } } : { ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }), headers: { get: () => null } }; };
+      const r2 = await ctx.executer(reglages, () => ia.repondre([{ role: 'user', content: 'salut' }]));
+      assert.strictEqual(r2.texte, 'ok');
+      assert.deepStrictEqual(vues, ['Bearer gsk_session_aaaaaaaa', 'Bearer gsk_hebergeur_bbbbbbbb']);
+    } finally {
+      global.fetch = sauve.fetch;
+      for (const [k, v] of [['GROQ_API_KEY', sauve.g], ['MISTRAL_API_KEY', sauve.m], ['CEREBRAS_API_KEY', sauve.c]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
+  await test('clés d’IA du site : lues dans la base (mode Supabase) avec ENGINES_KEY, absentes sans elle', async () => {
+    const crypto = require('crypto');
+    const { chargerUtilisateur } = require('../lib/session');
+    const sauve = { url: process.env.SUPABASE_URL, cle: process.env.SUPABASE_SERVICE_KEY, ek: process.env.ENGINES_KEY, fetch: global.fetch };
+    process.env.SUPABASE_URL = 'https://exemple.supabase.co';
+    process.env.SUPABASE_SERVICE_KEY = 'sb_secret_test';
+    const cle = Buffer.alloc(32, 5).toString('base64');
+    const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', Buffer.from(cle, 'base64'), iv);
+    const d = Buffer.concat([c.update(JSON.stringify({ mistral: 'mistral_cle_1234567890' }), 'utf8'), c.final()]);
+    const chiffre = ['v1', iv.toString('base64url'), c.getAuthTag().toString('base64url'), d.toString('base64url')].join('.');
+    const USER = '99999999-9999-4999-8999-999999999999';
+    const id = '123e4567-e89b-42d3-a456-426614174000';
+    const appels = [];
+    global.fetch = async (url) => {
+      const u = String(url); appels.push(u);
+      if (u.includes('/user_secrets')) return { ok: true, json: async () => [{ ai_keys_enc: chiffre }] };
+      return { ok: true, json: async () => [{ user_id: USER, profiles: { display_name: 'Josué', bot_prefix: '😀', bot_mode: 'private', sticker_pack: '', sticker_author: '' } }] };
+    };
+    try {
+      process.env.ENGINES_KEY = cle;
+      const s1 = {};
+      await chargerUtilisateur(id, s1);
+      assert.deepStrictEqual(s1.reglagesSite, { PREFIXE: '😀', MODE: 'private', CLES_IA: { mistral: 'mistral_cle_1234567890' } });
+      assert(appels.some((u) => u.includes(`user_secrets?user_id=eq.${USER}`)), appels.join('\n'));
+      delete process.env.ENGINES_KEY; appels.length = 0;
+      const s2 = {};
+      await chargerUtilisateur(id, s2);
+      assert.deepStrictEqual(s2.reglagesSite, { PREFIXE: '😀', MODE: 'private' }, 'sans ENGINES_KEY : pas de clé, le reste fonctionne');
+      assert(!appels.some((u) => u.includes('user_secrets')), 'pas de requête inutile');
+    } finally {
+      global.fetch = sauve.fetch;
+      for (const [k, v] of [['SUPABASE_URL', sauve.url], ['SUPABASE_SERVICE_KEY', sauve.cle], ['ENGINES_KEY', sauve.ek]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();

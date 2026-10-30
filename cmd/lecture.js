@@ -70,8 +70,8 @@ module.exports = [
     run: async (ctx) => {
       const { reply, sender } = ctx;
       const util = numero(sender);
-      if (!macle.cles(util).groq && !process.env.GROQ_API_KEY) {
-        return reply(`⚙️ La transcription utilise le service Groq (Whisper), mais aucune clé n’est configurée.\n• Propriétaire : GROQ_API_KEY dans le fichier .env\n• Ou chacun avec sa clé gratuite : ${config.PREFIXE}macle groq TA_CLÉ (en privé)`);
+      if (!macle.cles(util).groq && !require('../lib/ia').cleDeSession('groq') && !process.env.GROQ_API_KEY) {
+        return reply(`⚙️ La transcription utilise le service Groq (Whisper), mais aucune clé n’est configurée.\n• Propriétaire : clé Groq gratuite sur Kernel Connect (Paramètres > Mon IA) (ou GROQ_API_KEY dans .env)\n• Ou chacun avec sa clé gratuite : ${config.PREFIXE}macle groq TA_CLÉ (en privé)`);
       }
       const m = await recuperer(ctx, ['audio', 'video'], `📝 Cite un vocal, un audio ou une vidéo avec ${config.PREFIXE}transcrire`);
       if (!m) return;
