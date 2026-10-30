@@ -267,6 +267,20 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert.strictEqual(envoyes.length, 0);
     } finally { config.MODE = 'public'; }
   });
+  await test('moteur personnel (mode site) : le numéro connecté est propriétaire ; un tiers ne l’est pas', async () => {
+    const mk = (num) => Object.assign(Object.create(sock), { secondaire: true, user: { id: num + ':9@s.whatsapp.net' } });
+    const direDe = async (s, texte, extra = {}) => { envoyes.length = 0; await handler.traiter(s, { key: { remoteJid: '999999999@lid', fromMe: true, id: 'M' + ++n, ...extra }, message: { conversation: texte }, pushName: 'Moi', messageTimestamp: 1 }); return envoyes.slice(); };
+    const avant = process.env.SITE_URL;
+    process.env.SITE_URL = 'https://kernel-connect.vercel.app';
+    try {
+      const moi = mk('242099000000'); // absent de NUMERO_OWNER
+      assert(!/réservée au propriétaire/i.test(texteDe(await direDe(moi, '.bannir 242063333333 test'))), 'sur son propre moteur, il a les droits de propriétaire');
+      await direDe(moi, '.debannir 242063333333');
+      envoyes.length = 0;
+      await handler.traiter(moi, { key: { remoteJid: '242063333333@s.whatsapp.net', fromMe: false, id: 'M' + ++n }, message: { conversation: '.bannir 242055555555 test' }, pushName: 'Tiers', messageTimestamp: 1 });
+      assert(!require('../lib/permissions').estBanni('242055555555'), 'un tiers n’a aucun droit');
+    } finally { if (avant === undefined) delete process.env.SITE_URL; else process.env.SITE_URL = avant; }
+  });
   await test('niveaux : passage de niveau', async () => {
     const niv = require('../lib/niveaux');
     require('../lib/store').set('xp', GRP + '|242063333333', { xp: 49, msgs: 1, dernier: 0 });
