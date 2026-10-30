@@ -42,6 +42,20 @@ for (const m of ['./lib/taches']) {
 process.on('unhandledRejection', (e) => console.error('Rejection non gérée :', e?.message || e));
 process.on('uncaughtException', (e) => console.error('Erreur inattendue :', e?.message || e));
 
+// Arrêt demandé par l'hébergeur (redéploiement, redémarrage) : on enregistre proprement la session avant de quitter
+let sortie = false;
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    if (sortie) return;
+    sortie = true;
+    console.log(`🛑 Arrêt demandé (${sig}) : enregistrement de la session…`);
+    session.arreter().then((n) => {
+      console.log(`✅ ${n} session(s) enregistrée(s), arrêt.`);
+      process.exit(0);
+    }, () => process.exit(0));
+  });
+}
+
 require('./lib/sante').demarrer();
 chargerCommandes();
 jobs.demarrer(() => {

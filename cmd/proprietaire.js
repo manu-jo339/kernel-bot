@@ -326,7 +326,7 @@ module.exports = [
     run: async (ctx) => {
       const c = viser(ctx);
       if (!c) return ctx.reply(`✏️ ${ctx.config.PREFIXE}bloquer @personne (ou en privé avec la personne)`);
-      if (ctx.config.OWNERS.includes(numero(c))) return ctx.reply('🛡️ Impossible de bloquer un propriétaire.');
+      if (require('../lib/utils').proprietaires(ctx.sock).includes(numero(c))) return ctx.reply('🛡️ Impossible de bloquer un propriétaire.');
       await ctx.sock.updateBlockStatus(c, 'block');
       await ctx.reply(`🔒 @${numero(c)} est bloqué.`);
     },
@@ -368,7 +368,7 @@ module.exports = [
         return reply('⚠️ Le redémarrage automatique demande de lancer le bot avec *npm start* (et non « node index.js »).');
       }
       await reply('🔄 Redémarrage en cours… je reviens dans quelques secondes.');
-      setTimeout(() => process.exit(42), 1500);
+      setTimeout(() => require('../lib/session').arreter().finally(() => process.exit(42)), 1500);
     },
   },
   {

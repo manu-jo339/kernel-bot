@@ -361,6 +361,34 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     await handler.traiter(sock, citation('INCONNU'));
     assert(/pas reçu ce statut/.test(texteDe(envoyes)) || /Impossible de récupérer/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
   });
+  await test('moteur personnel : sans NUMERO_OWNER, le numéro connecté reçoit les notifications et l’anti-suppression « proprio »', async () => {
+    const utils = require('../lib/utils'), { prevenirProprio } = require('../lib/notifier'), cfg = require('../config');
+    const avant = cfg.OWNERS.slice();
+    const moi = Object.assign(Object.create(sock), { user: { id: '242098000000:3@s.whatsapp.net' } });
+    try {
+      assert.deepStrictEqual(utils.proprietaires(sock), cfg.OWNERS, 'avec NUMERO_OWNER : cette liste');
+      cfg.OWNERS.length = 0;
+      assert.deepStrictEqual(utils.proprietaires(moi), ['242098000000']);
+      envoyes.length = 0;
+      await prevenirProprio(moi, 'nouvelle commande');
+      assert(envoyes.some((e) => e.jid === '242098000000@s.whatsapp.net' && e.c.text === 'nouvelle commande'), 'notification envoyée au numéro connecté');
+      // le propriétaire ne peut pas être bloqué, même sans liste
+      envoyes.length = 0;
+      await handler.traiter(moi, { key: { remoteJid: '242098000000@s.whatsapp.net', fromMe: true, id: 'B' + ++n }, message: { conversation: '.bloquer 242098000000' }, pushName: 'Moi', messageTimestamp: 1 });
+      assert(!envoyes.some((e) => e.c?.block), 'aucun blocage');
+    } finally { cfg.OWNERS.splice(0, cfg.OWNERS.length, ...avant); }
+  });
+  await test('session principale : un message de mon propre numéro (ex : réponse à mon propre statut), même sans « fromMe », est propriétaire ; un tiers ne l’est pas', async () => {
+    const principale = Object.assign(Object.create(sock), { user: { id: '242098000000:3@s.whatsapp.net', lid: '54829904875595:3@lid' } });
+    const depuis = async (s, jidDe, texte) => { envoyes.length = 0; await handler.traiter(s, { key: { remoteJid: jidDe, fromMe: false, id: 'P' + ++n }, message: { conversation: texte }, pushName: 'Moi', messageTimestamp: 1 }); return envoyes.slice(); };
+    assert(!/réservée au propriétaire/i.test(texteDe(await depuis(principale, '242098000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'mon numéro');
+    assert(!/réservée au propriétaire/i.test(texteDe(await depuis(principale, '54829904875595@lid', '.bannir 242044444444 test'))), 'mon identifiant masqué');
+    await depuis(principale, '242098000000@s.whatsapp.net', '.debannir 242044444444');
+    assert(/réservée au propriétaire/i.test(texteDe(await depuis(principale, '242055555555@s.whatsapp.net', '.bannir 242044444444 test'))), 'un tiers reste refusé');
+    // le titulaire d'une session supplémentaire d'un moteur partagé n'a toujours pas ces droits
+    const secondaire = Object.assign(Object.create(sock), { secondaire: true, user: { id: '242097000000:3@s.whatsapp.net' } });
+    assert(/réservée au propriétaire/i.test(texteDe(await depuis(secondaire, '242097000000@s.whatsapp.net', '.bannir 242044444444 test'))), 'moteur partagé : titulaire non propriétaire');
+  });
   await test('niveaux : passage de niveau', async () => {
     const niv = require('../lib/niveaux');
     require('../lib/store').set('xp', GRP + '|242063333333', { xp: 49, msgs: 1, dernier: 0 });

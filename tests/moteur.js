@@ -279,6 +279,60 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(m.lire('e'), undefined);
   });
 
+  await test('envois espacés : plusieurs messages vers la même conversation partent dans l’ordre, avec un écart ; une autre conversation n’attend pas', async () => {
+    const { espacerEnvois } = require('../lib/session');
+    const journal = [];
+    const sock = { sendMessage: async (jid, c) => { journal.push([jid, c.text, Date.now()]); return { key: { id: c.text } }; } };
+    espacerEnvois(sock, 120);
+    const [r1, r2, r3, r4] = await Promise.all([sock.sendMessage('a', { text: '1' }), sock.sendMessage('a', { text: '2' }), sock.sendMessage('a', { text: '3' }), sock.sendMessage('b', { text: 'x' })]);
+    assert.strictEqual(r1.key.id, '1');
+    assert.strictEqual(r4.key.id, 'x');
+    assert.deepStrictEqual(journal.filter((j) => j[0] === 'a').map((j) => j[1]), ['1', '2', '3']);
+    const a = journal.filter((j) => j[0] === 'a');
+    assert.ok(a[1][2] - a[0][2] >= 100 && a[2][2] - a[1][2] >= 100, 'écart entre deux envois');
+    assert.ok(journal.find((j) => j[0] === 'b')[2] - a[0][2] < 100, 'l’autre conversation part tout de suite');
+    // une erreur d’envoi n’empêche pas les suivants
+    let n = 0;
+    const s2 = { sendMessage: async () => { if (++n === 1) throw new Error('échec'); return 'ok'; } };
+    espacerEnvois(s2, 10);
+    const p1 = s2.sendMessage('a', {}).catch((e) => e.message);
+    const p2 = s2.sendMessage('a', {});
+    assert.strictEqual(await p1, 'échec');
+    assert.strictEqual(await p2, 'ok');
+  });
+
+  await test('cache de tentatives : get/set/del, borné', async () => {
+    const { creerCacheTentatives } = require('../lib/session');
+    const c = creerCacheTentatives();
+    c.set('k', 2);
+    assert.strictEqual(c.get('k'), 2);
+    c.del('k');
+    assert.strictEqual(c.get('k'), undefined);
+    for (let i = 0; i < 2100; i++) c.set('m' + i, i);
+    assert.strictEqual(c.get('m0'), undefined);
+    assert.strictEqual(c.get('m2099'), 2099);
+  });
+
+  await test('arrêt propre : attend l’enregistrement des dernières clés, ferme sans déconnecter, ne bloque pas si l’enregistrement traîne', async () => {
+    const session = require('../lib/session');
+    let fini = false, ferme = false, logout = false;
+    session.sessions.set('essai-arret', { id: 'essai-arret', sock: { end: () => { ferme = true; }, logout: () => { logout = true; } }, viderAuth: () => new Promise((ok) => setTimeout(() => { fini = true; ok(); }, 60)) });
+    const n = await session.arreter(2000);
+    assert.ok(n >= 1 && fini && ferme && !logout, 'clés enregistrées avant l’arrêt, appareil toujours lié');
+    session.sessions.delete('essai-arret');
+  });
+
+  await test('file d’écriture de la session : vider() attend les écritures en cours', async () => {
+    const { construireEtat } = require('../lib/auth_supabase');
+    const ecrites = [];
+    const e = await construireEtat('s', { lire: async () => new Map(), ecrire: async (s, l) => { await new Promise((ok) => setTimeout(ok, 40)); ecrites.push(...l.map((x) => x.cle)); }, effacer: async () => {} });
+    e.state.keys.set({ session: { 'a.0': { x: 1 } } });
+    await e.state.creds && e.saveCreds();
+    assert.strictEqual(ecrites.length, 0);
+    await e.vider();
+    assert.deepStrictEqual(ecrites.sort(), ['creds', 'session-a.0']);
+  });
+
   await test('nom d’utilisateur du site : lu dans la base, assaini, affiché dans le menu et l’accueil (jamais « Propriétaire »)', async () => {
     const auth = require('../lib/auth_supabase');
     const { chargerUtilisateur, assainirNom } = require('../lib/session');

@@ -26,7 +26,7 @@ const reservé = (reply) => reply('⛔ Réservé au propriétaire du bot.');
 
 // Envoie un message au propriétaire (notifications de commande, de rendez-vous…)
 async function prevenirProprio(sock, texte) {
-  for (const n of config.OWNERS.slice(0, 2)) {
+  for (const n of require('../lib/utils').proprietaires(sock).slice(0, 2)) {
     try {
       await sock.sendMessage(jidDe(n), { text: texte });
     } catch (e) {
