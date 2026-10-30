@@ -288,6 +288,19 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert(!require('../lib/permissions').estBanni('242055555555'));
     } finally { if (avant === undefined) delete process.env.SITE_URL; else process.env.SITE_URL = avant; }
   });
+  await test('vue unique citée sans clé : le message d’origine gardé en mémoire est utilisé ; sinon message clair', async () => {
+    const utils = require('../lib/utils'), cache = require('../lib/cache');
+    const citation = (id, texte) => ({ key: { remoteJid: PROP, id: 'Q' + ++n }, message: { extendedTextMessage: { text: texte, contextInfo: { stanzaId: id, participant: MEMBRE, quotedMessage: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg' } } } } } } }, pushName: 'Moi', messageTimestamp: 1 });
+    // origine reçue et gardée en mémoire, avec sa clé
+    const origine = { key: { remoteJid: PROP, id: 'ORIG1', participant: MEMBRE }, message: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } } } };
+    cache.ajouter(origine);
+    const trouve = utils.messageMedia(citation('ORIG1', '.vv'));
+    assert(trouve && trouve.key.id === 'ORIG1' && trouve.type === 'imageMessage', 'reprend le message d’origine');
+    // origine inconnue : le bot l’explique au lieu d’un message d’erreur vague
+    envoyes.length = 0;
+    await handler.traiter(sock, citation('INCONNU', '.vv'));
+    assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
+  });
   await test('niveaux : passage de niveau', async () => {
     const niv = require('../lib/niveaux');
     require('../lib/store').set('xp', GRP + '|242063333333', { xp: 49, msgs: 1, dernier: 0 });
