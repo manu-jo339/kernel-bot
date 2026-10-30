@@ -830,6 +830,8 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     routes.length = 0;
   });
   await test('téléchargements : musique, youtube, liens refusés, installation requise', async () => {
+    // Le faux yt-dlp est un script bash : impossible à exécuter sous Windows (le bot, lui, tourne sous Linux sur Render).
+    if (process.platform === 'win32') { console.log('    ↷ ignoré sous Windows (faux yt-dlp en script bash)'); return; }
     const faux = tmpf('yt-dlp.sh');
     fs.writeFileSync(faux, `#!/bin/bash
 if [ "$1" = "--version" ]; then echo 2026.10.01; exit 0; fi

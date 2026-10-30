@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node supervisor.js",
     "direct": "node index.js",
-    "test": "node tests/essai.js && node tests/moteur.js"
+    "test": "node tests/essai.js && node tests/moteur.js && node tests/site.js"
   },
   "engines": {
     "node": ">=22.5"
