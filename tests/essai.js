@@ -6,6 +6,8 @@ process.chdir(process.env.DATA_DIR);
 process.env.NUMERO_OWNER = '242066000000';
 process.env.NUMERO_BOT = '242061111111';
 process.env.KERNEL_TEST = '1';
+// Variables de la machine (clés d'IA, jetons…) : jamais utilisées par les essais, sinon le chatbot appelle les vrais services
+for (const k of ['MISTRAL_API_KEY', 'GEMINI_API_KEY', 'GROQ_API_KEY', 'CEREBRAS_API_KEY', 'IA_ORDRE', 'GITHUB_TOKEN', 'GIPHY_API_KEY', 'AUDD_API_TOKEN', 'TENOR_API_KEY', 'TELEGRAM_BOT_TOKEN']) delete process.env[k];
 const assert = require('assert');
 const config = require('../config');
 require('../lib/protections');
@@ -40,7 +42,8 @@ const msg = (de, texte, groupe = true, extra = {}) => ({
 const dire = async (de, texte, groupe = true) => { envoyes.length = 0; await handler.traiter(sock, msg(de, texte, groupe)); return envoyes.slice(); };
 const texteDe = (r) => r.map((x) => x.c.text || '').join('\n');
 let ok = 0;
-const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', nom); } catch (e) { console.error('  ✘', nom, '\n   ', e.message); process.exitCode = 1; } };
+const echecs = [];
+const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', nom); } catch (e) { console.error('  ✘', nom, '\n   ', e.message); echecs.push(`${nom} -> ${String(e.message).split('\n')[0].slice(0, 200)}`); process.exitCode = 1; } };
 
 (async () => {
   console.log('Commandes :', handler.liste.length);
@@ -661,7 +664,8 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
   await test('absent : répondeur en privé', async () => {
     await dire(PROP, '.absent on Je reviens lundi');
     assert(/Je reviens lundi/.test(texteDe(await nomMsg(MEMBRE, 'bonjour'))));
-    assert((await nomMsg(MEMBRE, 'bonjour encore')).length === 0, 'répond deux fois');
+    const seconde = await nomMsg(MEMBRE, 'bonjour encore');
+    assert(seconde.length === 0, 'répond deux fois : ' + JSON.stringify(seconde.map((x) => String(x.c.text || Object.keys(x.c).join(',')).slice(0, 80))));
     await dire(PROP, '.absent off');
   });
   // ───── Étape 2 : communauté et vie locale ─────
@@ -1423,5 +1427,6 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     routes.length = 0;
   });
   console.log(`\n${ok} essais réussis.`);
+  if (echecs.length) console.log(`\nECHECS (${echecs.length}) :\n` + echecs.map((x) => ' - ' + x).join('\n'));
   process.exit(process.exitCode || 0);
 })();
