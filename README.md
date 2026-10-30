@@ -1,84 +1,80 @@
-# Kernel Bot — MWENOBANGUE Labs
+# Comment déployer son bot sur son propre Render, piloté depuis Kernel Connect
 
-Bot WhatsApp multi-appareil en français, en Node.js (Baileys), avec 350 commandes simples : protections de groupe, stickers, outils, assistants IA, vie locale… Tape `.menu` dans WhatsApp pour les voir par catégorie, et `.aide nom` pour le détail d'une commande.
+Avec Kernel Connect, tu gères ton bot WhatsApp depuis le site. Pour ne dépendre du serveur de personne, ton bot tourne sur **ton propre compte Render** (gratuit). Le site s'en occupe ensuite à ta place : création de ton bot, code de connexion, état.
 
-Kernel Bot peut s'utiliser de deux façons :
-- **piloté depuis le site Kernel Connect**, sur ton propre compte Render gratuit : voir [Mon propre moteur](#mon-propre-moteur--mon-bot-sur-mon-render-piloté-depuis-kernel-connect) ;
-- **en autonome** sur ton ordinateur ou sur un hébergeur : voir [Installation](#installation-autonome).
+Il te faut seulement un navigateur (sur téléphone ou ordinateur) et trois comptes gratuits : **Kernel Connect**, **GitHub** et **Render**. Aucun logiciel à installer. Compte environ 15 minutes.
 
-> WhatsApp n'autorise pas officiellement les bots non officiels : utilise de préférence un numéro dédié. Ne partage jamais le dossier `auth/` ni le fichier `.env`.
+## Étape 1 : générer ton secret
 
-## Mon propre moteur : mon bot sur mon Render, piloté depuis Kernel Connect
+1. Connecte-toi à Kernel Connect, ouvre **Mon moteur**.
+2. Clique sur **Générer un secret**, puis sur **Copier**.
+3. Colle ce secret dans les notes de ton téléphone. Tu en auras besoin à l'étape 3.
 
-Tu veux utiliser Kernel Connect (le site) sans passer par le serveur de son propriétaire ? Tu héberges toi-même le moteur sur ton compte Render gratuit, et le site le pilote : création des instances, code d'appairage, état, déconnexion. **Tu n'as besoin d'aucune base de données** : la session WhatsApp et l'état sont gardés par le site, et ce moteur ne détient aucune clé de base.
+Ne le partage avec personne. Laisse la page ouverte pour l'étape 4 (ou reviens-y plus tard : tu colleras le secret de tes notes).
 
-Ce qu'il te faut : un compte sur le site Kernel Connect, un compte gratuit sur Render, un compte GitHub. Compte environ 15 minutes.
+## Étape 2 : créer ton dépôt GitHub
 
-**Étape 1 : choisir ton secret.** C'est un mot de passe long (au moins 16 caractères, 32 conseillés) qui sert à signer les échanges entre ton moteur et le site. Génère-le avec `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`, ou avec n'importe quel gestionnaire de mots de passe. Garde-le : tu le saisiras deux fois (Render, puis le site). Ne le partage avec personne et ne l'écris dans aucun fichier du dépôt.
+1. Sur GitHub, clique sur **New repository**, donne-lui un nom (par exemple `mon-kernel-bot`) et crée-le (il peut être privé).
+2. Clique sur **creating a new file**, nomme le fichier exactement `Dockerfile` (avec la majuscule, sans extension).
+3. Copie-colle le contenu ci-dessous dans le fichier, puis clique sur **Commit changes**.
 
-**Étape 2 : ton dépôt GitHub, avec un seul fichier.**
-1. Sur GitHub, crée un nouveau dépôt à ton nom (nom au choix, par exemple `mon-kernel-bot`). Il peut être privé.
-2. Ajoute-y un seul fichier nommé exactement `Dockerfile`, avec le contenu du fichier [`deploy/ami/Dockerfile`](deploy/ami/Dockerfile) de ce dépôt (bouton *Add file* → *Create new file*, colle le contenu, *Commit*).
+```dockerfile
+# Kernel Bot — moteur personnel (à copier tel quel dans TON dépôt GitHub, sous le nom « Dockerfile »)
+# Ce fichier ne contient aucun secret : il télécharge le code public de Kernel Bot au moment de la construction.
+# Variables à définir sur Render (onglet Environment) : SITE_URL et ENGINE_SECRET. Rien d'autre.
+FROM node:22-bookworm-slim
 
-Tu n'as rien d'autre à copier : ce fichier télécharge lui-même la dernière version de Kernel Bot à chaque construction.
+# ffmpeg : stickers animés, audio, vidéo. git : pour télécharger le code du bot.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-**Étape 3 : créer le service sur Render.**
-1. Render → *New* → *Web Service* → *Git Provider* → choisis TON dépôt (celui de l'étape 2).
-2. *Language* : **Docker**. *Instance type* : **Free**.
-3. Dans *Environment*, ajoute deux variables, et seulement elles :
-   - `SITE_URL` = l'adresse https du site Kernel Connect (par exemple `https://kernel-connect.vercel.app`, sans `/` à la fin) ;
-   - `ENGINE_SECRET` = le secret de l'étape 1.
-   `MAX_SESSIONS=2` est la valeur par défaut conseillée sur l'offre gratuite (512 Mo de mémoire).
-4. *Create Web Service* et attends que le service soit **Live** (la première construction prend quelques minutes). Note son adresse (elle se termine par `.onrender.com`).
+# Dépôt et version du bot. « main » = toujours la dernière version à chaque reconstruction.
+# Pour figer une version stable, remplace par une étiquette, par exemple v1.0.0.
+ARG BOT_REPO=https://github.com/manu-jo339/kernel-bot.git
+ARG BOT_REF=main
 
-L'adresse publique est détectée toute seule sur Render. Dans les logs tu dois voir « Mode site : ce moteur est relié à Kernel Connect ». Avant l'étape suivante tu peux voir un message « le site refuse ce moteur » : c'est normal, il ne te connaît pas encore.
+WORKDIR /app
+RUN git clone --depth 1 --branch "${BOT_REF}" "${BOT_REPO}" /app \
+    && rm -rf /app/.git \
+    && npm ci --omit=dev
 
-**Étape 4 : l'enregistrer sur le site.**
-1. Connecte-toi à Kernel Connect → menu **Mon moteur**.
-2. Saisis un nom, l'adresse Render et le même secret, puis *Enregistrer*.
-3. Le site appelle ton moteur avec une signature pour vérifier que tout est bon. S'il répond « en ligne », c'est fini. Sinon, vérifie que le service Render est bien Live, l'adresse (exactement la même), et le secret (même valeur des deux côtés).
+ENV NODE_ENV=production
+# Render fournit PORT ; la page d'état répond dessus
+EXPOSE 10000
 
-**Étape 5 : créer ta première instance.** *Mes instances* → *Nouvelle instance* → choisis **Mon moteur** → saisis ton numéro WhatsApp → le site affiche le code d'appairage. Dans WhatsApp : *Appareils connectés* → *Connecter un appareil* → *Connecter avec un numéro de téléphone*, puis saisis le code. Le code n'apparaît jamais dans les logs de Render.
+# Un utilisateur sans privilèges
+RUN chown -R node:node /app
+USER node
 
-**Bon à savoir**
-- Le bot ne tourne que pour les instances créées depuis le site : il n'y a pas de bot principal sur ce moteur.
-- Ta session WhatsApp survit aux redémarrages de Render, car elle est gardée par le site. En revanche, les données locales du bot (avertissements, niveaux, réglages…) repartent à zéro à chaque redémarrage sur l'offre gratuite.
-- Le service gratuit s'endort après environ 15 minutes sans visite ; le bot s'appelle lui-même pour rester éveillé. Un service de ping externe (par exemple UptimeRobot, sur l'adresse racine du service) peut aider.
-- Les mises à jour : sur Render, *Manual Deploy* → **Clear build cache & deploy**. Le moteur télécharge alors la dernière version de Kernel Bot. Sans vider le cache, Render peut réutiliser l'ancienne version.
-- Sécurité : le site ne communique qu'avec des adresses `https://….onrender.com`. Ton moteur ne peut toucher qu'à **tes** instances ; il ne voit ni celles des autres moteurs, ni celles du moteur partagé. Et inversement, le site n'utilise ton secret que pour ton moteur.
-- Un compte qui n'a pas reçu le droit au moteur partagé ne peut créer des instances que sur son propre moteur.
-- **Confidentialité** : la session WhatsApp de ton moteur est gardée dans la base de Kernel Connect, pas sur ton Render. Elle est donc accessible à la personne qui administre le site. Ne l'utilise qu'avec quelqu'un en qui tu as confiance, et de préférence avec un numéro dédié au bot.
+CMD ["node", "supervisor.js"]
+```
 
-## Installation autonome
+## Étape 3 : créer ton service sur Render
 
-1. Installer [Node.js](https://nodejs.org) 22.5 ou plus.
-2. Dans le dossier du bot : `npm install`, puis `copy .env.example .env` et `notepad .env` (Windows) ou `cp .env.example .env` (Linux/macOS).
-3. Dans `.env`, renseigner `NUMERO_BOT` (le numéro qui sera connecté) et `NUMERO_OWNER` (ton numéro), au format international sans `+` (par exemple `242061234567`).
-4. `npm start` : un code d'appairage s'affiche. Sur le téléphone du bot : WhatsApp → Appareils connectés → Connecter un appareil → Se connecter avec un numéro de téléphone → saisir le code.
+1. Sur Render : **New** → **Web Service** → choisis ton dépôt de l'étape 2.
+2. **Language** : `Docker`. **Instance Type** : `Free`.
+3. Dans **Environment Variables**, ajoute deux variables :
+   - `SITE_URL` : l'adresse du site Kernel Connect, sans `/` à la fin (par exemple `https://kernel-connect.vercel.app`) ;
+   - `ENGINE_SECRET` : le secret de l'étape 1.
+4. Clique sur **Create Web Service**. Attends que l'état passe à **Live** (quelques minutes la première fois), puis copie l'adresse de ton service, tout en haut (elle se termine par `.onrender.com`).
 
-Aux lancements suivants, la connexion est automatique. Pour changer de numéro, supprime le dossier `auth/`.
+## Étape 4 : relier ton Render au site
 
-**Personnaliser** : le préfixe, le mode public/privé et les numéros se règlent dans `.env` (toutes les variables sont expliquées dans `.env.example`). Signature, titre et pied du menu, emojis, messages d'erreur, noms de commandes et commandes à désactiver se règlent dans `personnalisation.json`. **Ajouter une commande** : copie `cmd/_modele.js` vers `cmd/mescommandes.js`, modifie-le et redémarre le bot.
+1. Retourne sur Kernel Connect → **Mon moteur**.
+2. Donne un nom, colle l'adresse de ton service Render et le secret, puis clique sur **Vérifier et enregistrer**.
+3. Si le site affiche « Moteur enregistré et vérifié », c'est bon. Sinon, vérifie que ton service est bien **Live**, que l'adresse est exactement la même, et que le secret est identique des deux côtés.
 
-**Vérifier** : `npm test` lance les essais automatiques avec un faux WhatsApp (aucune connexion réelle).
+## Étape 5 : connecter ton WhatsApp
 
-## Héberger sur Render avec la session dans Supabase
+1. Va dans **Mes instances** → **Nouvelle instance**, choisis **Mon moteur**, et saisis ton numéro WhatsApp.
+2. Le site affiche un code. Sur ton téléphone : WhatsApp → **Appareils connectés** → **Connecter un appareil** → **Se connecter avec un numéro de téléphone**, puis saisis le code.
 
-Render gratuit efface les fichiers à chaque redémarrage : la session WhatsApp est donc gardée dans Supabase.
+C'est terminé : ton bot répond maintenant sur ce numéro. Tape `.menu` dans WhatsApp pour voir ses commandes.
 
-1. Dans le *SQL Editor* de Supabase, exécute une fois `deploy/supabase.sql` (table `kernel_auth`, accessible seulement avec la clé `service_role`).
-2. Mets le projet dans ton dépôt GitHub (le `.gitignore` exclut déjà `.env`, `auth`, `sessions` et `data`).
-3. Render → *New* → *Web Service* → ton dépôt → *Language* : Docker → instance *Free*.
-4. Variables (onglet *Environment*, jamais dans le code) : `NUMERO_BOT`, `NUMERO_OWNER`, `NOM_OWNER`, `PREFIXE`, `MODE`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, et les clés du chatbot si besoin.
-5. Au premier démarrage, le code d'appairage s'affiche dans les *Logs* de Render. Ensuite, le bot se reconnecte seul.
+## Bon à savoir
 
-Seule la session survit aux redémarrages : les données du dossier `data` (avertissements, niveaux…) repartent à zéro sur l'offre gratuite.
-
-## API moteur pour Kernel Connect
-
-Le site pilote le moteur par des appels signés (HMAC-SHA256 de `horodatage.MÉTHODE.chemin.corps`, valables 60 secondes, jamais rejoués). Avec `ENGINE_SECRET` défini, le moteur expose `GET /engine/health` et, par instance, `POST /engine/instances/:id/pair`, `…/disconnect`, `…/reconnect` et `DELETE /engine/instances/:id`. Sans `ENGINE_SECRET`, l'API reste fermée. Avec `PRINCIPAL=non`, aucun bot principal n'est lancé : les codes d'appairage ne sont affichés que sur le site. Sur Render gratuit, garde `MAX_SESSIONS=2`.
-
-
----
-
-MWENOBANGUE Labs · Brazzaville
+- **Mettre à jour ton bot** : sur Render, **Manual Deploy** → **Clear build cache & deploy**.
+- **Il s'endort** après un moment sans activité sur l'offre gratuite, puis se réveille tout seul. Le bot se réveille de lui-même régulièrement pour rester disponible.
+- **Tes réglages** (avertissements, niveaux…) sont remis à zéro quand Render redémarre le service. La connexion WhatsApp, elle, est conservée.
+- **Confidentialité** : la connexion WhatsApp de ton bot est gardée par Kernel Connect, pas par ton Render. La personne qui administre le site peut donc y accéder. Utilise de préférence un numéro dédié au bot, et seulement si tu fais confiance à cette personne.
+- **Ton bot ne gère que tes instances.** Personne d'autre ne peut l'utiliser, et tu ne vois pas celles des autres.
