@@ -752,6 +752,11 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(envoyes.length, 1);
     assert.strictEqual(envoyes[0].jid, '242061234567@s.whatsapp.net');
     assert(/Test Kernel Connect/.test(envoyes[0].c.text) && /\.ping/.test(envoyes[0].c.text));
+    // le préfixe choisi par l'utilisateur est celui qui est annoncé (ici un emoji)
+    w.session.sessions.get(ID).sock.reglagesSite = { MODE: 'private', PREFIXE: '🙂' };
+    r = await appel(srv, { chemin: `/engine/instances/${ID}/test` });
+    assert.strictEqual(r.json.prefixe, '🙂');
+    assert(/\*🙂ping\*/.test(envoyes[1].c.text) && !/\.ping/.test(envoyes[1].c.text));
     // en sommeil et envoi refusé : raison claire, pas d'erreur technique
     r = await appel(srv, { chemin: `/engine/instances/${ID3}/test` });
     assert.deepStrictEqual(r.json, { ok: false, raison: 'envoi_refuse' }); assert.strictEqual(r.statut, 200);
@@ -762,7 +767,11 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     // en sommeil : le message le dit
     w.session.sessions.get(ID).sock.enAttente = true;
     r = await appel(srv, { chemin: `/engine/instances/${ID}/test` });
-    assert.strictEqual(r.json.enAttente, true); assert(/\.start/.test(envoyes[1].c.text));
+    assert.strictEqual(r.json.enAttente, true); assert(/\*🙂start\*/.test(envoyes[envoyes.length - 1].c.text));
+    // préfixe « * » : jamais de gras autour (sinon *\*ping* illisible)
+    w.session.sessions.get(ID).sock.reglagesSite = { MODE: 'private', PREFIXE: '*' };
+    r = await appel(srv, { chemin: `/engine/instances/${ID}/test` });
+    assert(/écris \*start pour/.test(envoyes[envoyes.length - 1].c.text) && r.json.prefixe === '*');
     // statistiques
     suivi.commande('ping'); suivi.commande('ping'); suivi.erreur('sticker', 'échec 242061234567');
     r = await appel(srv, { methode: 'GET', chemin: `/engine/instances/${ID}/status` });
