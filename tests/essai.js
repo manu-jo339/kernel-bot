@@ -1434,6 +1434,318 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(require('../cmd/systeme').plusRecent('1.10.0', '1.9.9') && !require('../cmd/systeme').plusRecent('1.0.0', '1.0.0'));
     routes.length = 0;
   });
+  // ───────────── Étape 1 : antisuppression par type, corbeille, admins, moiadmin, anti-raid, fermeture temporaire ─────────────
+  const reglagesT = require('../lib/reglages');
+  const groupesT = require('../lib/groupes');
+  const corbeilleT = require('../lib/corbeille');
+  const cacheT = require('../lib/cache');
+  const statutsT = require('../lib/statuts');
+  const jobsT = require('../lib/jobs');
+  const RAZ_AS = { antisuppression: false, antisuppressionPrive: null, antisuppressionGroupes: null, antisuppressionStatuts: false, antisuppressionVers: 'ici' };
+  const ST = '242067777777@s.whatsapp.net';
+
+  await test('antisuppression : un réglage par type (privé, groupes, statuts), « all », et l’ancien on/off ne touche pas aux statuts', async () => {
+    reglagesT.ecrire(RAZ_AS);
+    const etat = () => reglagesT.antisuppressionEtat();
+    const t0 = texteDe(await dire(PROP, '.antisuppression', false));
+    assert(/Discussions privées/.test(t0) && /Groupes/.test(t0) && /Statuts/.test(t0), t0);
+    assert.deepStrictEqual(etat(), { prive: false, groupes: false, statuts: false });
+    await dire(PROP, '.antisuppression prive on', false);
+    assert.deepStrictEqual(etat(), { prive: true, groupes: false, statuts: false });
+    await dire(PROP, '.antisuppression statuts on', false);
+    assert.deepStrictEqual(etat(), { prive: true, groupes: false, statuts: true });
+    await dire(PROP, '.antisuppression all off', false);
+    assert.deepStrictEqual(etat(), { prive: false, groupes: false, statuts: false });
+    await dire(PROP, '.antisuppression all on', false);
+    assert.deepStrictEqual(etat(), { prive: true, groupes: true, statuts: true });
+    await dire(PROP, '.antisuppression off', false); // ancien « off » : privé + groupes
+    assert.deepStrictEqual(etat(), { prive: false, groupes: false, statuts: true });
+    await dire(PROP, '.antisuppression on', false);
+    assert.deepStrictEqual(etat(), { prive: true, groupes: true, statuts: true });
+    reglagesT.ecrire(RAZ_AS);
+    await dire(PROP, '.antisuppression on', false);
+    assert.deepStrictEqual(etat(), { prive: true, groupes: true, statuts: false }, 'l’ancien « on » n’active pas les statuts');
+    await dire(PROP, '.antisuppression groupes off', false);
+    assert.deepStrictEqual(etat(), { prive: true, groupes: false, statuts: false });
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.antisuppression all on'))), 'réservé au propriétaire');
+    await dire(PROP, '.antisuppression proprio', false);
+    assert.strictEqual(reglagesT.lire().antisuppressionVers, 'proprio');
+    // ancien réglage (avant cette version) : « antisuppression: true » seul vaut pour privé + groupes
+    reglagesT.ecrire({ ...RAZ_AS, antisuppression: true });
+    assert.deepStrictEqual(etat(), { prive: true, groupes: true, statuts: false });
+    reglagesT.ecrire(RAZ_AS);
+  });
+
+  await test('antisuppression : les messages supprimés sont renvoyés selon le type ; les statuts toujours au propriétaire', async () => {
+    const revoque = (remoteJid, id, participant) => ({ key: { remoteJid, participant, id: 'R' + ++n, fromMe: false }, message: { protocolMessage: { type: 0, key: { id, remoteJid, participant } } }, messageTimestamp: 1 });
+    const original = (remoteJid, id, participant) => { const m = { key: { remoteJid, participant, id, fromMe: false }, message: { conversation: 'secret ' + id }, messageTimestamp: 1 }; cacheT.ajouter(m); return m; };
+    const PV = MEMBRE;
+    reglagesT.ecrire(RAZ_AS);
+    // tout désactivé : rien
+    original(PV, 'PV0'); original(GRP, 'GR0', MEMBRE);
+    envoyes.length = 0; await handler.traiter(sock, revoque(PV, 'PV0')); await handler.traiter(sock, revoque(GRP, 'GR0', MEMBRE));
+    assert.strictEqual(envoyes.length, 0, 'tout désactivé : rien ne sort');
+    // privé seulement
+    reglagesT.ecrire({ antisuppressionPrive: true });
+    original(PV, 'PV1'); original(GRP, 'GR1', MEMBRE);
+    envoyes.length = 0; await handler.traiter(sock, revoque(GRP, 'GR1', MEMBRE));
+    assert.strictEqual(envoyes.length, 0, 'groupes désactivés : rien');
+    await handler.traiter(sock, revoque(PV, 'PV1'));
+    assert(envoyes.some((x) => x.jid === PV && /Message supprimé/.test(x.c.text || '')) && envoyes.some((x) => x.c.forward), 'privé : message renvoyé dans la discussion');
+    // groupes seulement, renvoyés au propriétaire
+    reglagesT.ecrire({ antisuppressionPrive: false, antisuppressionGroupes: true, antisuppressionVers: 'proprio' });
+    original(PV, 'PV2'); original(GRP, 'GR2', MEMBRE);
+    envoyes.length = 0; await handler.traiter(sock, revoque(PV, 'PV2'));
+    assert.strictEqual(envoyes.length, 0, 'privé désactivé : rien');
+    await handler.traiter(sock, revoque(GRP, 'GR2', MEMBRE));
+    assert(envoyes.some((x) => x.jid === PROP && /dans un groupe/.test(x.c.text || '')), 'groupes : renvoyé au propriétaire');
+    // statuts : jamais « ici », toujours au propriétaire, et seulement si activé
+    reglagesT.ecrire({ ...RAZ_AS, antisuppressionPrive: true, antisuppressionGroupes: true });
+    statutsT.garder({ key: { remoteJid: 'status@broadcast', id: 'S1', participant: ST }, message: { conversation: 'mon statut secret' } });
+    envoyes.length = 0; await handler.traiter(sock, revoque('status@broadcast', 'S1', ST));
+    assert.strictEqual(envoyes.length, 0, 'statuts désactivés : rien');
+    reglagesT.ecrire({ antisuppressionStatuts: true });
+    await handler.traiter(sock, revoque('status@broadcast', 'S1', ST));
+    assert(envoyes.length > 0 && envoyes.every((x) => x.jid === PROP), 'statut supprimé : envoyé au propriétaire seulement');
+    assert(/Statut supprimé par \+242067777777/.test(texteDe(envoyes)) && /mon statut secret/.test(texteDe(envoyes)), texteDe(envoyes));
+    // statut qu'on n'avait pas gardé : on prévient quand même
+    envoyes.length = 0; await handler.traiter(sock, revoque('status@broadcast', 'INCONNU', ST));
+    assert(/pas gardé/.test(texteDe(envoyes)));
+    reglagesT.ecrire(RAZ_AS);
+  });
+
+  // Groupe d'essai « vivant » : les ajouts et retraits modifient la liste des membres
+  const CREA = '242060000009@s.whatsapp.net', ADM2 = '242062222223@s.whatsapp.net', M1 = '242064444441@s.whatsapp.net', M2 = '242064444442@s.whatsapp.net', M3 = '255700000003@s.whatsapp.net';
+  const sauvegarde = { meta: sock.groupMetadata, maj: sock.groupParticipantsUpdate };
+  let parts = [];
+  let refus = {}; // numéro -> statut renvoyé à l'ajout (403…)
+  const reglagesGroupe = [];
+  const nouveauGroupe = (liste) => {
+    parts = liste.map((p) => ({ ...p }));
+    groupesT.invalider(GRP);
+    corbeilleT.vider(GRP);
+    refus = {};
+    reglagesGroupe.length = 0;
+    sock.groupMetadata = async () => ({ id: GRP, subject: 'Groupe vivant', desc: '', participants: parts.map((p) => ({ ...p })) });
+    sock.groupInviteCode = async () => 'CODEINVIT';
+    sock.groupSettingUpdate = async (j, r) => { reglagesGroupe.push(r); };
+    sock.groupParticipantsUpdate = async (j, ids, action) => {
+      envoyes.push({ jid: j, c: { action, ids } });
+      return ids.map((id) => {
+        const num = id.split('@')[0];
+        const st = action === 'add' && refus[num] ? refus[num] : '200';
+        if (st === '200') {
+          if (action === 'remove') parts = parts.filter((p) => p.id !== id);
+          if (action === 'add' && !parts.some((p) => p.id === id)) parts.push({ id });
+          if (action === 'promote') parts.forEach((p) => { if (p.id === id) p.admin = 'admin'; });
+          if (action === 'demote') parts.forEach((p) => { if (p.id === id && p.admin === 'admin') delete p.admin; });
+        }
+        return { status: st, jid: id };
+      });
+    };
+    groupesT.invalider(GRP);
+  };
+  const actions = (r, a) => r.filter((x) => x.c.action === a).flatMap((x) => x.c.ids);
+  process.env.PAUSE_LOTS_MS = '0';
+  process.env.REAJOUTER_PAUSE_MS = '0';
+
+  await test('expulsion : la corbeille garde les membres retirés (kickall, kick), et « reajouter » les remet un par un', async () => {
+    nouveauGroupe([{ id: BOT, admin: 'admin' }, { id: ADMIN, admin: 'admin' }, { id: PROP }, { id: M1 }, { id: M2 }, { id: M3 }]);
+    assert(/La corbeille est vide/.test(texteDe(await dire(ADMIN, '.reajouter'))));
+    let r = await dire(ADMIN, '.expulsertous');
+    assert(/exclura \*3\* membres/.test(texteDe(r)) && actions(r, 'remove').length === 0, texteDe(r));
+    r = await dire(ADMIN, '.expulsertous oui');
+    assert.deepStrictEqual(actions(r, 'remove').sort(), [M1, M2, M3].sort(), 'seuls les non-admins sont exclus (pas le propriétaire du bot non plus)'.replace('pas le propriétaire du bot non plus', 'le propriétaire PROP est protégé'));
+    assert(/3 membre\(s\) exclu\(s\)/.test(texteDe(r)) && /reajouter/.test(texteDe(r)), texteDe(r));
+    assert.strictEqual(corbeilleT.lire(GRP).length, 3);
+    // aperçu
+    r = await dire(ADMIN, '.reajouter');
+    const aperçu = texteDe(r);
+    assert(/Corbeille de Groupe vivant/.test(aperçu) && /242064444441/.test(aperçu) && /bannir le numéro/.test(aperçu) && /reajouter oui/.test(aperçu) && actions(r, 'add').length === 0, aperçu);
+    // réajout : un membre refuse l'ajout (confidentialité) → lien d'invitation envoyé en privé
+    refus['242064444442'] = '403';
+    r = await dire(ADMIN, '.reajouter oui');
+    assert.deepStrictEqual(actions(r, 'add').sort(), [M1, M2, M3].sort());
+    assert(r.filter((x) => x.c.action === 'add').every((x) => x.c.ids.length === 1), 'un par un');
+    const dm = r.find((x) => x.jid === M2 && /chat\.whatsapp\.com\/CODEINVIT/.test(x.c.text || ''));
+    assert(dm, 'lien d’invitation envoyé en privé à celui qui refuse');
+    assert(!r.some((x) => x.jid === M1 && x.c.text), 'ceux qui ont pu être ajoutés ne reçoivent rien');
+    const fin = texteDe(r);
+    assert(/Remis dans le groupe : 2/.test(fin) && /Lien d’invitation envoyé en privé.*: 1/.test(fin), fin);
+    assert.strictEqual(corbeilleT.lire(GRP).length, 0, 'corbeille vidée');
+    // un membre exclu seul ; réajout par numéro ; refus pour les non-admins
+    await dire(ADMIN, '.expulser 242064444441');
+    assert.strictEqual(corbeilleT.lire(GRP).length, 1);
+    assert(REFUS.test(texteDe(await dire(M2, '.reajouter oui'))), 'réservé aux admins');
+    r = await dire(ADMIN, '.reajouter 242064444441');
+    assert.deepStrictEqual(actions(r, 'add'), [M1]);
+    assert(/Remis dans le groupe : 1/.test(texteDe(r)));
+    // ceux qui partent d'eux-mêmes ne vont pas dans la corbeille ; ceux qu'un autre admin retire, si
+    await evenements.surParticipants(sock, { id: GRP, action: 'remove', participants: [M3], author: M3 });
+    assert.strictEqual(corbeilleT.lire(GRP).length, 0, 'parti de lui-même : pas de corbeille');
+    await evenements.surParticipants(sock, { id: GRP, action: 'remove', participants: [M3], author: ADMIN });
+    assert.strictEqual(corbeilleT.lire(GRP).length, 1, 'retiré par un admin : en corbeille');
+    await evenements.surParticipants(sock, { id: GRP, action: 'add', participants: [M3], author: ADMIN });
+    assert.strictEqual(corbeilleT.lire(GRP).length, 0, 'revenu : il sort de la corbeille');
+    // 30 jours
+    corbeilleT.noter(GRP, [{ ids: [M2], jid: M2, tel: '242064444442' }]);
+    const brut = require('../lib/store').get('corbeille', GRP);
+    brut[0].ts = Date.now() - 31 * 864e5;
+    require('../lib/store').set('corbeille', GRP, brut);
+    assert.strictEqual(corbeilleT.lire(GRP).length, 0, 'au-delà de 30 jours : oubliés');
+  });
+
+  await test('option « admins » des commandes d’exclusion : propriétaire du bot seulement, rétrograde puis retire, épargne créateur / bot / propriétaires, confirmation renforcée', async () => {
+    const regroupe = () => nouveauGroupe([{ id: BOT, admin: 'admin' }, { id: CREA, admin: 'superadmin' }, { id: ADMIN, admin: 'admin' }, { id: ADM2, admin: 'admin' }, { id: PROP }, { id: M1 }, { id: M2 }]);
+    regroupe();
+    // un administrateur ordinaire ne peut pas utiliser l'option
+    let r = await dire(ADMIN, '.expulsertous oui admins 2');
+    assert(/réservée au propriétaire du bot/.test(texteDe(r)) && actions(r, 'remove').length === 0, texteDe(r));
+    r = await dire(ADMIN, '.expulser 242062222223 admins oui');
+    assert(/réservée au propriétaire du bot/.test(texteDe(r)) && actions(r, 'remove').length === 0);
+    // sans l'option : un admin n'est jamais exclu, même pour le propriétaire
+    r = await dire(PROP, '.expulser 242062222223');
+    assert(/Impossible d’exclure un administrateur/.test(texteDe(r)) && /admins/.test(texteDe(r)) && actions(r, 'remove').length === 0, texteDe(r));
+    // avec l'option : confirmation d'abord (sans « oui » rien ne se passe)
+    r = await dire(PROP, '.expulser 242062222223 admins');
+    assert(/rétrogradés puis exclus/.test(texteDe(r)) && actions(r, 'remove').length === 0 && actions(r, 'demote').length === 0, texteDe(r));
+    r = await dire(PROP, '.expulser 242062222223 admins oui');
+    assert.deepStrictEqual(actions(r, 'demote'), [ADM2]);
+    assert.deepStrictEqual(actions(r, 'remove'), [ADM2]);
+    assert(r.findIndex((x) => x.c.action === 'demote') < r.findIndex((x) => x.c.action === 'remove'), 'rétrogradé AVANT d’être retiré');
+    assert.strictEqual(corbeilleT.lire(GRP).length, 1, 'l’admin retiré est en corbeille');
+    // le créateur du groupe, le bot et le propriétaire ne peuvent jamais être visés
+    for (const cible of ['242060000009', '242061111111', '242066000000']) {
+      r = await dire(PROP, `.expulser ${cible} admins oui`);
+      assert(/ne peuvent pas être exclus/.test(texteDe(r)) && actions(r, 'remove').length === 0, cible + ' : ' + texteDe(r));
+    }
+    // expulsertous admins : aperçu, puis confirmation renforcée avec le nombre d'admins
+    regroupe();
+    r = await dire(PROP, '.expulsertous admins');
+    assert(/exclura \*4\* membres, dont \*2 administrateur\(s\)\*/.test(texteDe(r)) && /oui admins 2/.test(texteDe(r)) && actions(r, 'remove').length === 0, texteDe(r));
+    r = await dire(PROP, '.expulsertous oui admins');
+    assert(/2 administrateur\(s\)/.test(texteDe(r)) && actions(r, 'remove').length === 0, 'sans le nombre d’admins : refusé');
+    r = await dire(PROP, '.expulsertous oui admins 5');
+    assert(actions(r, 'remove').length === 0, 'mauvais nombre : refusé');
+    r = await dire(PROP, '.expulsertous oui admins 2');
+    assert.deepStrictEqual(actions(r, 'demote').sort(), [ADMIN, ADM2].sort());
+    assert.deepStrictEqual(actions(r, 'remove').sort(), [ADMIN, ADM2, M1, M2].sort());
+    assert(!actions(r, 'remove').some((i) => [CREA, BOT, PROP].includes(i)), 'créateur, bot et propriétaire épargnés');
+    // expulserpays admins
+    parts = [{ id: BOT, admin: 'admin' }, { id: CREA, admin: 'superadmin' }, { id: ADM2, admin: 'admin' }, { id: M1 }, { id: M3 }]; groupesT.invalider(GRP);
+    r = await dire(PROP, '.expulserpays 242 oui admins');
+    assert(/1 administrateur/.test(texteDe(r)) && actions(r, 'remove').length === 0, texteDe(r));
+    r = await dire(PROP, '.expulserpays 242 oui admins 1');
+    assert.deepStrictEqual(actions(r, 'remove').sort(), [ADM2, M1].sort(), 'M3 (+255) n’est pas du pays visé ; le créateur +242 est épargné');
+    // l'usage sans « admins » reste inchangé : les admins ne sont jamais touchés
+    regroupe();
+    r = await dire(PROP, '.expulserpays 242 oui');
+    assert(!actions(r, 'remove').some((i) => [ADMIN, ADM2, CREA, BOT].includes(i)) && actions(r, 'remove').includes(M1));
+  });
+
+  await test('moiadmin / moimembre : réservés au propriétaire du bot, le bot doit être admin', async () => {
+    nouveauGroupe([{ id: BOT, admin: 'admin' }, { id: CREA, admin: 'superadmin' }, { id: ADMIN, admin: 'admin' }, { id: PROP }, { id: M1 }]);
+    assert(REFUS.test(texteDe(await dire(M1, '.moiadmin'))), 'un membre ne peut pas');
+    assert(REFUS.test(texteDe(await dire(ADMIN, '.moiadmin'))), 'un admin ordinaire non plus');
+    let r = await dire(PROP, '.moiadmin');
+    assert.deepStrictEqual(actions(r, 'promote'), [PROP]);
+    assert(/maintenant administrateur/.test(texteDe(r)));
+    r = await dire(PROP, '.autoadmin');
+    assert(/déjà administrateur/.test(texteDe(r)) && actions(r, 'promote').length === 0);
+    r = await dire(PROP, '.moimembre');
+    assert.deepStrictEqual(actions(r, 'demote'), [PROP]);
+    r = await dire(PROP, '.moimembre');
+    assert(/pas administrateur/.test(texteDe(r)) && actions(r, 'demote').length === 0);
+    // le bot ne peut pas se rétrograder lui-même par cette commande
+    const moi = msg(PROP, '.moimembre'); moi.key.fromMe = true; moi.key.participant = BOT;
+    envoyes.length = 0; await handler.traiter(sock, moi);
+    assert(/compte du bot/.test(texteDe(envoyes)) && actions(envoyes, 'demote').length === 0, texteDe(envoyes));
+    // le bot n'est pas admin : refus clair
+    parts = parts.map((p) => (p.id === BOT ? { id: BOT } : p)); groupesT.invalider(GRP);
+    assert(/administrateur du groupe/.test(texteDe(await dire(PROP, '.moiadmin'))));
+  });
+
+  await test('anti-raid : trop de retraits en une minute par un admin → groupe fermé et alerte ; jamais pour le bot, les propriétaires ni le créateur', async () => {
+    nouveauGroupe([{ id: BOT, admin: 'admin' }, { id: CREA, admin: 'superadmin' }, { id: ADMIN, admin: 'admin' }, { id: PROP }, { id: M1 }, { id: M2 }, { id: M3 }]);
+    const retire = (ids, author) => evenements.surParticipants(sock, { id: GRP, action: 'remove', participants: ids, author });
+    // désactivé par défaut
+    envoyes.length = 0; await retire([M1, M2, M3], ADMIN);
+    assert.strictEqual(reglagesGroupe.length, 0, 'anti-raid désactivé : rien');
+    assert(/désactivé/.test(texteDe(await dire(ADMIN, '.antiraid'))));
+    await dire(ADMIN, '.antiraid on'); await dire(ADMIN, '.antiraid seuil 3');
+    assert.strictEqual(groupesT.sous(GRP, 'antiraid').seuil, 3);
+    // propriétaire / bot / créateur : jamais
+    envoyes.length = 0;
+    await retire([M1, M2, M3], PROP); await retire([M1, M2, M3], BOT); await retire([M1, M2, M3], CREA);
+    assert.strictEqual(reglagesGroupe.length, 0, 'propriétaire, bot et créateur ne déclenchent pas l’anti-raid');
+    // un admin qui retire 2 puis 1 membres en une minute
+    await retire([M1, M2], ADMIN);
+    assert.strictEqual(reglagesGroupe.length, 0, 'sous le seuil');
+    envoyes.length = 0; await retire([M3], ADMIN);
+    assert.deepStrictEqual(reglagesGroupe, ['announcement'], 'groupe fermé');
+    assert(/Anti-raid/.test(texteDe(envoyes)) && /242062222222/.test(texteDe(envoyes)), texteDe(envoyes));
+    // promotions en rafale
+    reglagesGroupe.length = 0;
+    await evenements.surParticipants(sock, { id: GRP, action: 'promote', participants: [M1, M2, M3], author: ADMIN });
+    assert.deepStrictEqual(reglagesGroupe, ['announcement'], 'trois promotions d’un coup : groupe fermé');
+  });
+
+  await test('fermer 2h : fermeture temporaire, réouverture automatique ; ouvrir l’annule', async () => {
+    nouveauGroupe([{ id: BOT, admin: 'admin' }, { id: ADMIN, admin: 'admin' }, { id: M1 }]);
+    jobsT.supprimerCle('rouvrir:' + GRP);
+    let r = await dire(ADMIN, '.fermer');
+    assert.deepStrictEqual(reglagesGroupe, ['announcement']);
+    assert.strictEqual(jobsT.parCle('rouvrir:' + GRP).length, 0, 'sans durée : pas de réouverture');
+    assert(/Je n’ai pas compris la durée/.test(texteDe(await dire(ADMIN, '.fermer bientot'))));
+    assert(/entre 1 minute et 7 jours/.test(texteDe(await dire(ADMIN, '.fermer 30j'))));
+    r = await dire(ADMIN, '.fermer 2h');
+    const taches = jobsT.parCle('rouvrir:' + GRP);
+    assert.strictEqual(taches.length, 1);
+    assert(Math.abs(taches[0].quand - (Date.now() + 2 * 3600000)) < 60000, 'dans 2 heures');
+    assert(/fermé pour 2 h/.test(texteDe(r)), texteDe(r));
+    // refermer remplace la tâche (une seule)
+    await dire(ADMIN, '.fermer 30min');
+    assert.strictEqual(jobsT.parCle('rouvrir:' + GRP).length, 1);
+    assert(jobsT.parCle('rouvrir:' + GRP)[0].quand < Date.now() + 31 * 60000);
+    // ouvrir annule la réouverture programmée
+    reglagesGroupe.length = 0;
+    await dire(ADMIN, '.ouvrir');
+    assert.deepStrictEqual(reglagesGroupe, ['not_announcement']);
+    assert.strictEqual(jobsT.parCle('rouvrir:' + GRP).length, 0);
+    // l'échéance arrive : le groupe se rouvre tout seul et le dit
+    jobsT.ajouter({ quand: Date.now() - 1000, type: 'rouvrir', data: { jid: GRP, sess: 'principal' }, cle: 'rouvrir:' + GRP });
+    jobsT.demarrer(() => sock);
+    reglagesGroupe.length = 0; envoyes.length = 0;
+    await jobsT.tic();
+    assert.deepStrictEqual(reglagesGroupe, ['not_announcement'], 'rouvert à l’échéance');
+    assert(/Fin de la fermeture temporaire/.test(texteDe(envoyes)));
+    assert.strictEqual(jobsT.parCle('rouvrir:' + GRP).length, 0);
+  });
+
+  await test('session reprise ou supprimée : plus aucune écriture de clés (l’ancien programme n’écrase pas le nouveau)', async () => {
+    const { construireEtat } = require('../lib/auth_supabase');
+    const base = new Map(), journal = [];
+    const lire = async (s, cles) => new Map(cles.filter((c) => base.has(c)).map((c) => [c, base.get(c)]));
+    const ecrire = async (s, l) => { for (const x of l) { base.set(x.cle, x.valeur); journal.push(x.cle); } };
+    const effacer = async (s, cles) => { for (const c of cles) base.delete(c); };
+    const e = await construireEtat('essai', { lire, ecrire, effacer });
+    await e.state.keys.set({ 'pre-key': { 1: { a: 1 } } });
+    await e.saveCreds();
+    await e.vider();
+    assert(base.has('pre-key-1') && base.has('creds'), 'avant le gel : écrit');
+    e.geler();
+    base.delete('pre-key-1');
+    await e.state.keys.set({ 'pre-key': { 2: { a: 2 } } });
+    await e.saveCreds();
+    await e.vider();
+    assert(!base.has('pre-key-2') && !base.has('pre-key-1'), 'après le gel : aucune écriture (rien ne ressuscite)');
+  });
+
+  sock.groupMetadata = sauvegarde.meta; sock.groupParticipantsUpdate = sauvegarde.maj;
+  delete sock.groupInviteCode; delete sock.groupSettingUpdate;
+  delete process.env.PAUSE_LOTS_MS; delete process.env.REAJOUTER_PAUSE_MS;
+  groupesT.invalider(GRP);
+
   console.log(`\n${ok} essais réussis.`);
   if (echecs.length) console.log(`\nECHECS (${echecs.length}) :\n` + echecs.map((x) => ' - ' + x).join('\n'));
   process.exit(process.exitCode || 0);

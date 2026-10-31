@@ -186,14 +186,58 @@ module.exports = [
       return reply(`✅ Emoji de réaction : ${args[1]}`);
     },
   }),
-  global({
-    name: 'antisuppression', cle: 'antisuppression', desc: 'Réaffiche les messages supprimés', aide: '{P}antisuppression ici | proprio — où renvoyer le message supprimé',
-    extra: async ({ reply }, a) => {
-      if (!['ici', 'proprio'].includes(a)) return null;
-      reglages.ecrire({ antisuppression: true, antisuppressionVers: a });
-      return reply(`✅ Anti-suppression activé : messages renvoyés ${a === 'ici' ? 'dans la discussion' : 'au propriétaire'}.`);
+  {
+    ...base,
+    name: 'antisuppression',
+    desc: 'Réaffiche les messages supprimés — privé, groupes, statuts ou tout',
+    run: async ({ args, reply, config }) => {
+      const P = config.PREFIXE;
+      const a = (args[0] || '').toLowerCase();
+      const b = (args[1] || '').toLowerCase();
+      const TYPES = { prive: 'prive', privé: 'prive', prives: 'prive', privés: 'prive', pv: 'prive', groupe: 'groupes', groupes: 'groupes', gc: 'groupes', statut: 'statuts', statuts: 'statuts', status: 'statuts' };
+      const CLES = { prive: 'antisuppressionPrive', groupes: 'antisuppressionGroupes', statuts: 'antisuppressionStatuts' };
+      const NOMS = { prive: 'discussions privées', groupes: 'groupes', statuts: 'statuts' };
+      const r = reglages.lire();
+      const montrer = () => {
+        const e = reglages.antisuppressionEtat(r);
+        return reply(
+          `🗑️ *Anti-suppression*\n\n` +
+            `• Discussions privées : ${etat(e.prive)}\n• Groupes : ${etat(e.groupes)}\n• Statuts : ${etat(e.statuts)}\n\n` +
+            `📍 Privé et groupes : renvoyés *${r.antisuppressionVers === 'proprio' ? 'au propriétaire' : 'dans la discussion'}* ; les statuts vont toujours au propriétaire.\n\n` +
+            `${P}antisuppression prive on | off\n${P}antisuppression groupes on | off\n${P}antisuppression statuts on | off\n` +
+            `${P}antisuppression all on | off — les trois en même temps\n${P}antisuppression on | off — privé + groupes (comme avant)\n` +
+            `${P}antisuppression ici | proprio — où renvoyer les messages supprimés`
+        );
+      };
+      if (!a) return montrer();
+      const veutOui = (v) => OUI.includes(v), veutNon = (v) => NON.includes(v);
+      // Sans « on / off » après le type, on active
+      const valeur = (v) => (veutNon(v) ? false : veutOui(v) || !v ? true : null);
+      if (['ici', 'proprio'].includes(a)) {
+        const e = reglages.antisuppressionEtat(r);
+        reglages.ecrire({ antisuppressionVers: a, ...(e.prive || e.groupes ? {} : { antisuppressionPrive: true, antisuppressionGroupes: true }) });
+        return reply(`✅ Messages supprimés (privé et groupes) renvoyés ${a === 'ici' ? 'dans la discussion' : 'au propriétaire'}.`);
+      }
+      if (veutOui(a) || veutNon(a)) {
+        const v = veutOui(a);
+        reglages.ecrire({ antisuppression: v, antisuppressionPrive: v, antisuppressionGroupes: v });
+        return reply(`${v ? '✅' : '❌'} Anti-suppression ${v ? 'activé' : 'désactivé'} pour les discussions privées et les groupes. Les statuts : ${P}antisuppression statuts ${v ? 'on' : 'off'}.`);
+      }
+      if (['all', 'tout', 'tous', 'toutes'].includes(a)) {
+        const v = valeur(b);
+        if (v === null) return montrer();
+        reglages.ecrire({ antisuppression: v, antisuppressionPrive: v, antisuppressionGroupes: v, antisuppressionStatuts: v });
+        return reply(`${v ? '✅' : '❌'} Anti-suppression ${v ? 'activé' : 'désactivé'} : discussions privées, groupes et statuts.`);
+      }
+      if (TYPES[a]) {
+        const v = valeur(b);
+        if (v === null) return montrer();
+        reglages.ecrire({ [CLES[TYPES[a]]]: v });
+        return reply(`${v ? '✅' : '❌'} Anti-suppression ${v ? 'activé' : 'désactivé'} pour les ${NOMS[TYPES[a]]}.${TYPES[a] === 'statuts' && v ? ' Les statuts supprimés te seront envoyés en privé.' : ''}`);
+      }
+      return montrer();
     },
-  }),
+  },
   {
     ...base,
     name: 'adminsseulement',

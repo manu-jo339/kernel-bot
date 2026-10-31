@@ -168,6 +168,7 @@ module.exports = [
   interrupteur({ name: 'antimentiongc', cle: 'antimentiongroupe', desc: 'Bloque les mentions du groupe en statut', actions: true }),
   interrupteur({ name: 'antipromote', cle: 'antipromotion', desc: 'Annule les promotions faites par d’autres que le propriétaire' }),
   interrupteur({ name: 'antidemote', cle: 'antidegradation', desc: 'Annule les rétrogradations faites par d’autres que le propriétaire' }),
+  interrupteur({ name: 'antiraid', cle: 'antiraid', desc: 'Ferme le groupe si quelqu’un retire ou nomme trop de monde en une minute', options: { seuil: { libelle: 'Seuil de retraits en 1 minute', defaut: 5 } }, aide: 'Ne compte jamais le bot ni les propriétaires du bot. {P}ouvrir rouvre le groupe.' }),
   interrupteur({ name: 'promotealert', cle: 'alertepromotion', desc: 'Annonce les nouvelles promotions' }),
   interrupteur({ name: 'demotealert', cle: 'alertedegradation', desc: 'Annonce les rétrogradations' }),
   messageAccueil({ name: 'welcome', cle: 'bienvenue', desc: 'Message de bienvenue aux nouveaux membres', exemple: 'Bienvenue {nom} dans {groupe} !' }),
