@@ -1753,6 +1753,22 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     } finally { cfg.CHAINE_URL = avant; }
   });
 
+  await test('catalogue public : généré à partir du code (toutes les commandes, une description, sans anciens noms ni doublons)', async () => {
+    const { catalogue } = require('../lib/catalogue');
+    const c = catalogue(handler.liste, new Date('2026-10-31T10:00:00Z'));
+    assert.strictEqual(c.total, handler.liste.length);
+    assert.strictEqual(c.genere, '2026-10-31');
+    assert.strictEqual(c.categories[0], 'Général');
+    const noms = c.commandes.map((x) => x.nom);
+    assert.strictEqual(new Set(noms).size, noms.length, 'aucun doublon');
+    assert(c.commandes.every((x) => x.desc && x.categorie && ['Tous', 'Groupe', 'Admin groupe', 'Propriétaire'].includes(x.droit)), 'chaque commande a une description, une catégorie, un droit');
+    const kick = c.commandes.find((x) => x.nom === 'expulser');
+    assert(kick && kick.droit === 'Admin groupe' && !kick.alias.includes('kick'), 'les anciens noms (kick…) ne sont pas dans les alias affichés');
+    assert(kick.anciens.includes('kick'), 'mais « kick » est retrouvable : ancien nom gardé pour la recherche');
+    assert(c.commandes.every((x) => Array.isArray(x.anciens) && !x.anciens.includes(x.nom)));
+    assert(c.commandes.find((x) => x.nom === 'reajouter'), 'les nouvelles commandes y sont');
+  });
+
   sock.groupMetadata = sauvegarde.meta; sock.groupParticipantsUpdate = sauvegarde.maj;
   delete sock.groupInviteCode; delete sock.groupSettingUpdate;
   delete process.env.PAUSE_LOTS_MS; delete process.env.REAJOUTER_PAUSE_MS;

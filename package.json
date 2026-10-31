@@ -8,6 +8,7 @@
   "scripts": {
     "start": "node supervisor.js",
     "direct": "node index.js",
+    "commandes": "node scripts/exporter-commandes.js",
     "test": "node tests/essai.js && node tests/moteur.js && node tests/site.js"
   },
   "engines": {
