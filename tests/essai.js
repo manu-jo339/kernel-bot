@@ -223,6 +223,33 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert(!/Fait/.test(r) && /Attention/.test(r), r);
     } finally { handler.commands.delete('discretetest'); handler.liste.splice(handler.liste.indexOf(ctxCmd), 1); }
   });
+  await test('.repeter : réservé au propriétaire, plafonné, une boucle à la fois, arrêt possible', async () => {
+    const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+    const nb = (mot) => envoyes.filter((x) => x.c.text === mot).length;
+    // un membre de groupe ne peut jamais la lancer
+    assert(REFUS.test(texteDe(await dire(MEMBRE, '.repeter 3 2 spam'))), 'refusée pour un membre');
+    assert(nb('spam') === 0, 'rien envoyé');
+    // aide et limites
+    assert(/Répéter un message/.test(texteDe(await dire(PROP, '.repeter', false))));
+    assert(/entre 1 et 30/.test(texteDe(await dire(PROP, '.repeter 31 2 a', false))));
+    assert(/au moins 2 secondes/.test(texteDe(await dire(PROP, '.repeter 5 1 a', false))));
+    assert(/Aucune répétition/.test(texteDe(await dire(PROP, '.stoprepeter', false))));
+    // « .repeter 2 2 fin » : 2 envois, 2 secondes d'écart, l'alias « rr » marche, et aucune confirmation dans la discussion
+    envoyes.length = 0;
+    await handler.traiter(sock, msg(PROP, '.rr 2 2 fin', false));
+    assert(nb('fin') === 1 && !/✅/.test(texteDe(envoyes)), 'premier envoi immédiat, sans confirmation');
+    await dormir(2400);
+    assert(nb('fin') === 2, 'deuxième envoi après la pause : ' + nb('fin'));
+    await dormir(300);
+    // une seule boucle à la fois, et l'arrêt coupe la suite
+    envoyes.length = 0;
+    await handler.traiter(sock, msg(PROP, '.repeter 5 2 salut', false));
+    await handler.traiter(sock, msg(PROP, '.repeter 3 2 autre', false)); // sans « dire » : il vide la liste des envois
+    assert(/déjà en cours/.test(texteDe(envoyes)), texteDe(envoyes));
+    await handler.traiter(sock, msg(PROP, '.stoprepeter', false));
+    await dormir(2400);
+    assert(nb('salut') === 1 && nb('autre') === 0, 'arrêtée après le premier envoi : ' + nb('salut'));
+  });
   await test('utilisateur : nom du .env dans le menu, jamais le numéro', async () => {
     const config = require('../config');
     const avant = config.NOM_OWNER;

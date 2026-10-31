@@ -6,6 +6,22 @@ const { parseQuand } = require('../lib/temps');
 const { numero, dateLocale, formatDuree } = require('../lib/utils');
 
 const base = { categorie: 'Outils' };
+// ───────────── Répéter un message (propriétaire seulement, plafonné) ─────────────
+const REPETER_MAX = 30;
+const REPETER_PAUSE_MIN = 2;
+const boucles = new Map(); // « session|discussion » → { stop, fait }
+const attendreBoucle = async (b, ms) => {
+  const fin = Date.now() + ms;
+  while (!b.stop && Date.now() < fin) await new Promise((r) => setTimeout(r, Math.min(250, Math.max(0, fin - Date.now()))));
+};
+function arreterBoucle(cle, reply) {
+  const b = boucles.get(cle);
+  if (!b) return reply('ℹ️ Aucune répétition en cours ici.');
+  b.stop = true;
+  boucles.delete(cle);
+  return reply(`✅ Répétition arrêtée après ${b.fait} envoi(s).`);
+}
+
 const fr = (n, d = 6) => Number(n).toLocaleString('fr-FR', { maximumFractionDigits: d });
 
 // ───────────── Calcul (analyseur maison, sans eval) ─────────────
@@ -414,5 +430,63 @@ module.exports = [
       jobs.ajouter({ quand: q.quand, type: 'programme', data: { jid, texte: texte.slice(0, 3000), sess: sock.sessionId || 'principal' }, repete: q.repete, cle });
       await reply(`✅ Message programmé pour *${dateLocale(q.quand)}*${q.repete ? ' (répété)' : ''}.`);
     },
+  },
+  {
+    ...base,
+    name: 'repeter',
+    aliases: ['rr', 'boucle'],
+    desc: 'Envoie un message plusieurs fois de suite dans cette discussion (nombre, pause en secondes, message)',
+    usage: '{P}repeter 30 2 bonjour  (30 fois, 2 secondes entre chaque)\n{P}rr 10 5 Réunion à 18h !\n{P}repeter stop  ou  {P}stoprepeter',
+    ownerOnly: true,
+    strict: true,
+    discrete: true,
+    run: async ({ sock, jid, texte, args, reply, config }) => {
+      const p = config.PREFIXE;
+      const cle = `${sock.sessionId || 'principal'}|${jid}`;
+      if (args[0] && /^(stop|arreter|arrêter)$/i.test(args[0])) return arreterBoucle(cle, reply);
+      const m = String(texte || '').trim().match(/^\S+\s+(\d+)\s+(\d+(?:[.,]\d+)?)\s*s?\b\s*([\s\S]+)$/i);
+      if (!m) return reply(`🔁 *Répéter un message*\n${p}repeter 30 2 bonjour → 30 fois, 2 secondes entre chaque\n${p}rr 10 5 Réunion à 18h !\nArrêt : ${p}stoprepeter\n\nMaximum ${REPETER_MAX} envois, pause minimale ${REPETER_PAUSE_MIN} secondes.`);
+      const n = parseInt(m[1], 10);
+      const pause = parseFloat(m[2].replace(',', '.'));
+      const message = m[3].trim().slice(0, 1000);
+      if (n < 1 || n > REPETER_MAX) return reply(`⚠️ Le nombre d’envois doit être entre 1 et ${REPETER_MAX}.`);
+      if (!(pause >= REPETER_PAUSE_MIN) || pause > 3600) return reply(`⚠️ La pause doit être d’au moins ${REPETER_PAUSE_MIN} secondes (et 1 heure au plus) : plus vite, WhatsApp peut bloquer ton numéro.`);
+      if (!message) return reply('✏️ Écris le message à répéter.');
+      if (boucles.has(cle)) return reply(`⚠️ Une répétition est déjà en cours ici. Tape ${p}stoprepeter pour l’arrêter.`);
+      const b = { stop: false, fait: 0 };
+      boucles.set(cle, b);
+      // La boucle tourne en arrière-plan : la commande rend tout de suite la main (réaction ✅), et l’arrêt reste possible à tout moment
+      (async () => {
+        let echecs = 0;
+        try {
+          for (let i = 0; i < n && !b.stop; i++) {
+            try {
+              await sock.sendMessage(jid, { text: message });
+              b.fait++;
+              echecs = 0;
+            } catch (e) {
+              console.error('[repeter] envoi impossible :', e.message);
+              if (++echecs >= 3) {
+                await sock.sendMessage(jid, { text: `⚠️ Répétition arrêtée après ${b.fait} envoi(s) : WhatsApp refuse l’envoi pour le moment.` }).catch(() => {});
+                break;
+              }
+            }
+            if (i < n - 1) await attendreBoucle(b, pause * 1000);
+          }
+        } finally {
+          if (boucles.get(cle) === b) boucles.delete(cle);
+        }
+      })();
+    },
+  },
+  {
+    ...base,
+    name: 'stoprepeter',
+    aliases: ['stoprr', 'rrstop', 'stopboucle'],
+    desc: 'Arrête la répétition de message en cours dans cette discussion',
+    ownerOnly: true,
+    strict: true,
+    discrete: true,
+    run: async ({ sock, jid, reply }) => arreterBoucle(`${sock.sessionId || 'principal'}|${jid}`, reply),
   },
 ];

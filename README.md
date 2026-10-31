@@ -27,19 +27,20 @@ FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-ARG BOT_REPO=https://github.com/manu-jo339/kernel-bot.git
-ARG BOT_REF=main
+ENV BOT_REPO=https://github.com/manu-jo339/kernel-bot.git
+ENV BOT_REF=stable
 
+# Copie de secours faite à la construction. Au démarrage, le moteur récupère lui-même la dernière version.
 WORKDIR /app
-RUN git clone --depth 1 --branch "${BOT_REF}" "${BOT_REPO}" /app \
-    && rm -rf /app/.git \
-    && npm ci --omit=dev
+RUN git clone --depth 1 --branch "${BOT_REF}" "${BOT_REPO}" /app/base \
+    && rm -rf /app/base/.git \
+    && cd /app/base && npm ci --omit=dev
 
 ENV NODE_ENV=production
 EXPOSE 10000
 RUN chown -R node:node /app
 USER node
-CMD ["node", "supervisor.js"]
+CMD ["sh", "/app/base/deploy/demarrer.sh"]
 ```
 
 ## Étape 3 : créer ton service sur Render
@@ -68,13 +69,16 @@ C'est terminé : ton bot répond maintenant sur ce numéro. Tape `.menu` dans Wh
 
 ## Bon à savoir
 
-- **Mettre à jour ton bot** : sur Render, **Manual Deploy** → **Clear build cache & deploy**.
+- **Mettre à jour ton bot** : sur Kernel Connect, ouvre **Mon moteur** et clique sur **Mettre à jour mon bot**. Ton bot redémarre, récupère la dernière version et revient tout seul en une minute (le développeur peut aussi mettre à jour tous les moteurs d'un coup). Si ce bouton répond que ton moteur ne sait pas encore se mettre à jour, fais une seule fois **Manual Deploy** → **Clear build cache & deploy** sur Render avec le Dockerfile ci-dessus.
 - **Mise en veille** : sur l'offre gratuite, Render peut mettre le service en veille. Le bot s'appelle lui-même toutes les 10 minutes pour l'éviter. Après une coupure, la première action sur le site peut prendre une minute.
 - **Tes réglages** (avertissements, niveaux…) sont remis à zéro quand Render redémarre le service. La connexion WhatsApp, elle, est conservée.
 - **Confidentialité** : la connexion WhatsApp de ton bot est gardée par Kernel Connect, pas par ton Render. La personne qui administre le site peut donc y accéder. Utilise de préférence un numéro dédié au bot, et seulement si tu fais confiance à cette personne.
 - **Ton bot ne gère que tes instances.** Personne d'autre ne peut l'utiliser, et tu ne vois pas celles des autres.
 
 ## Pour les développeurs
+
+- **Publier une version** : les moteurs personnels suivent la branche `stable`, pas `main`. Travaille et teste sur `main`, puis publie une version testée avec `git push origin main:stable`. Les moteurs la récupèrent à leur prochain démarrage ; le bouton administrateur de Kernel Connect (*État du système → Mettre à jour les moteurs*) les redémarre tous d'un coup. Le moteur de la plateforme (Render du développeur) se redéploie tout seul à chaque push sur `main`.
+- **Démarrage d'un moteur personnel** : `deploy/demarrer.sh` clone la dernière version de `stable` à chaque démarrage et garde la copie faite à la construction si GitHub ne répond pas. L'API moteur accepte `POST /engine/update` (signé comme les autres appels) : le moteur ferme ses sessions puis s'arrête (code 43) ; Render le relance.
 
 - **Variables d'environnement** : toutes sont décrites, avec leurs valeurs par défaut, dans `.env.example`. Sur Render, tu n'as besoin que de `SITE_URL` et `ENGINE_SECRET`.
 - **Moteur de la plateforme (Supabase)** : `ENGINES_KEY` (la même valeur que sur Vercel) permet de lire les clés d'IA que les utilisateurs enregistrent sur le site. Un moteur personnel relié au site n'en a pas besoin.

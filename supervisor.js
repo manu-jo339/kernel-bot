@@ -14,6 +14,11 @@ function lancer() {
   });
   enfant.on('exit', (code, signal) => {
     if (arret) return process.exit(0);
+    if (code === 43) {
+      // Mise à jour demandée par Kernel Connect : on arrête tout le serveur. L'hébergeur (Render) le relance, et le script de démarrage récupère la dernière version.
+      console.log('♻️ Mise à jour demandée : le serveur redémarre…');
+      return process.exit(43);
+    }
     if (code === 42) {
       console.log('🔄 Redémarrage demandé…');
       return setTimeout(lancer, 500);

@@ -1,0 +1,3 @@
+# Les scripts et le Dockerfile doivent garder des fins de ligne Unix (LF) : un « \r » casserait le démarrage sur Render.
+*.sh text eol=lf
+Dockerfile text eol=lf

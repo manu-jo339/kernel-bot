@@ -14,7 +14,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
 function monde({ max = 2, secret = SECRET, enregistrees = [], delaiCode = 500, attenteAppairage = 60000 } = {}) {
   const ecouteurs = new Set();
   const sessions = new Map();
-  const journal = { lancements: [], retraits: [], logouts: [], base: [] };
+  const journal = { lancements: [], retraits: [], logouts: [], base: [], redemarrages: 0 };
   const session = {
     sessions,
     MAX_SECONDAIRES: max,
@@ -39,7 +39,7 @@ function monde({ max = 2, secret = SECRET, enregistrees = [], delaiCode = 500, a
   };
   const authSupabase = { actif: () => true, sessionsEnregistrees: async () => enregistrees };
   const t0 = { v: Date.now() };
-  const m = creer({ session, authSupabase, base, secret, maintenant: () => t0.v, delaiCode, attenteAppairage });
+  const m = creer({ session, authSupabase, base, secret, maintenant: () => t0.v, delaiCode, attenteAppairage, redemarrer: () => { journal.redemarrages++; } });
   return { m, session, journal, t0 };
 }
 
@@ -818,6 +818,56 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     // nettoyage (la base de l'essai est partagée avec les autres essais)
     for (const id of [ID, ID2]) await ecrire(id, { antisuppression: { prive: false, groupes: false, statuts: false, vers: 'ici' } });
   }));
+
+  await test('mise à jour : appel signé → réponse puis redémarrage demandé une seule fois ; sans signature, rien ne bouge', () => avec({}, async (w, s) => {
+    assert.strictEqual((await appel(s, { chemin: '/engine/update', sansSignature: true })).statut, 401);
+    assert.strictEqual((await appel(s, { chemin: '/engine/update', secret: 'mauvais-secret-assez-long-12345' })).statut, 401);
+    assert.strictEqual((await appel(s, { methode: 'GET', chemin: '/engine/update' })).statut, 404, 'seule la méthode POST existe');
+    assert.strictEqual(w.journal.redemarrages, 0, 'aucun redémarrage sans signature valide');
+    const r = await appel(s, { chemin: '/engine/update' });
+    assert.strictEqual(r.statut, 200);
+    assert.strictEqual(r.json.ok, true);
+    assert.strictEqual(w.journal.redemarrages, 1);
+    const sante = (await appel(s, { methode: 'GET', chemin: '/engine/health' })).json;
+    assert(/^\d+\.\d+\.\d+/.test(sante.version), 'la santé indique la version : ' + sante.version);
+  }));
+
+  await test('démarrage (deploy/demarrer.sh) : dernière version si GitHub répond, copie de secours sinon, dépendances réutilisées ou réinstallées', async () => {
+    // Ce script ne tourne que dans le conteneur Linux (Render) : sous Windows, les faux git/npm du test ne sont pas trouvés.
+    if (process.platform === 'win32') return console.log('    (ignoré sous Windows : testé sous Linux)');
+    const { spawnSync } = require('child_process');
+    const fs = require('fs'), os = require('os'), path = require('path');
+    const racine = fs.mkdtempSync(path.join(os.tmpdir(), 'demarrage-'));
+    const lancer = (git, npm, lockLive) => {
+      const app = fs.mkdtempSync(path.join(racine, 'app-'));
+      const bin = fs.mkdtempSync(path.join(racine, 'bin-'));
+      fs.mkdirSync(path.join(app, 'base', 'node_modules'), { recursive: true });
+      fs.writeFileSync(path.join(app, 'base', 'package-lock.json'), 'lock-base');
+      fs.writeFileSync(path.join(app, 'base', 'supervisor.js'), '');
+      // faux « git » : crée la dernière version (ou échoue) ; faux « npm » ; faux « node » : dit d'où il est lancé
+      fs.writeFileSync(path.join(bin, 'git'), git === 'ok'
+        ? `#!/bin/sh\nfor d; do :; done\nmkdir -p "$d/.git"\nprintf %s ${lockLive} > "$d/package-lock.json"\n: > "$d/supervisor.js"\n`
+        : '#!/bin/sh\nexit 128\n');
+      fs.writeFileSync(path.join(bin, 'npm'), npm === 'ok' ? '#!/bin/sh\nmkdir -p node_modules\nexit 0\n' : '#!/bin/sh\nexit 1\n');
+      fs.writeFileSync(path.join(bin, 'node'), '#!/bin/sh\necho "LANCE_DEPUIS=$(pwd)"\n');
+      for (const f of ['git', 'npm', 'node']) fs.chmodSync(path.join(bin, f), 0o755);
+      const r = spawnSync('sh', [path.join(__dirname, '..', 'deploy', 'demarrer.sh')], { env: { PATH: bin + ':' + process.env.PATH, APP_DIR: app, BOT_REF: 'stable', BOT_REPO: 'x' }, encoding: 'utf8' });
+      return { app, sortie: r.stdout + r.stderr };
+    };
+    // 1. GitHub répond, mêmes dépendances : on lance la dernière version, node_modules est celui de la copie de secours
+    let r = lancer('ok', 'ok', 'lock-base');
+    assert(r.sortie.includes(`LANCE_DEPUIS=${fs.realpathSync(r.app)}/live`) || r.sortie.includes('/live'), r.sortie);
+    assert(fs.lstatSync(path.join(r.app, 'live', 'node_modules')).isSymbolicLink(), 'dépendances réutilisées');
+    // 2. GitHub répond, dépendances différentes : réinstallation
+    r = lancer('ok', 'ok', 'lock-nouveau');
+    assert(r.sortie.includes('/live') && fs.existsSync(path.join(r.app, 'live', 'node_modules')) && !fs.lstatSync(path.join(r.app, 'live', 'node_modules')).isSymbolicLink(), r.sortie);
+    // 3. GitHub répond, mais l'installation échoue : copie de secours
+    r = lancer('ok', 'ko', 'lock-nouveau');
+    assert(/copie de secours/.test(r.sortie) && /\/base/.test(r.sortie) && !fs.existsSync(path.join(r.app, 'live')), r.sortie);
+    // 4. GitHub injoignable : copie de secours
+    r = lancer('ko', 'ok', 'x');
+    assert(/injoignable/.test(r.sortie) && /\/base/.test(r.sortie), r.sortie);
+  });
 
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
