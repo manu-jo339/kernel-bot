@@ -285,7 +285,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(m.jid === '242061111111@s.whatsapp.net' && /channel\/0029VaTest123/.test(m.c.caption || m.c.text), JSON.stringify(m.c).slice(0, 200));
     envoyes.length = 0;
     assert(await b.envoyer(sock, 350) === 'demarrage', 'ensuite : court message à chaque démarrage');
-    assert(/connecté/.test(envoyes[0].c.caption || envoyes[0].c.text) && !/Chaîne|chaine/.test(envoyes[0].c.caption || envoyes[0].c.text), 'message court');
+    assert(/connecté/.test(envoyes[0].c.caption || envoyes[0].c.text) && /channel\/0029VaTest123/.test(envoyes[0].c.caption || envoyes[0].c.text), 'message court : avec le lien de la chaîne');
     assert(suivis.length === 0, 'aucun suivi automatique');
     const c1 = texteDe(await dire(MEMBRE, '.chaine'));
     assert(suivis.length === 0);
@@ -1739,6 +1739,18 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     await e.saveCreds();
     await e.vider();
     assert(!base.has('pre-key-2') && !base.has('pre-key-1'), 'après le gel : aucune écriture (rien ne ressuscite)');
+  });
+
+  await test('message « connecté » après .start / démarrage : le lien de la chaîne y figure (et disparaît si CHAINE_URL est vide)', async () => {
+    const b = require('../lib/bienvenue'), cfg = require('../config');
+    const avant = cfg.CHAINE_URL;
+    try {
+      cfg.CHAINE_URL = 'https://whatsapp.com/channel/0029VbEssai';
+      const t = b.texteDemarrage(359);
+      assert(/est connecté/.test(t) && t.includes('https://whatsapp.com/channel/0029VbEssai') && /Chaîne d'assistance/.test(t), t);
+      cfg.CHAINE_URL = '';
+      assert(!/whatsapp\.com\/channel|Chaîne/.test(b.texteDemarrage(359)));
+    } finally { cfg.CHAINE_URL = avant; }
   });
 
   sock.groupMetadata = sauvegarde.meta; sock.groupParticipantsUpdate = sauvegarde.maj;

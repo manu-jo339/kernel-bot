@@ -716,6 +716,67 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     for (const t of ['start', '.starter', '.start now', '.menu', '!start', 'bonjour', '']) assert(!act.estDemandeStart(t, '😀'), JSON.stringify(t));
   });
 
+  await test('suivi d’une session : commandes les plus utilisées, dernière activité, erreurs nettoyées (jamais de numéro ni de clé), 5 erreurs au plus', () => {
+    const { creer: creerSuivi } = require('../lib/suivi');
+    let t = 1000; const s = creerSuivi(() => t);
+    assert.deepStrictEqual(s.instantane().topCommandes, []);
+    assert.strictEqual(s.instantane().derniereActivite, null);
+    for (const c of ['ping', 'menu', 'ping', 'sticker', 'ping', 'menu', 'a', 'b', 'c']) { t += 10; s.commande(c); }
+    const i = s.instantane();
+    assert.deepStrictEqual(i.topCommandes.slice(0, 2), [{ nom: 'ping', n: 3 }, { nom: 'menu', n: 2 }]);
+    assert.strictEqual(i.topCommandes.length, 5);
+    assert.strictEqual(i.commandesTraitees, 9);
+    assert.strictEqual(i.derniereActivite, t);
+    for (let k = 0; k < 8; k++) s.erreur('sticker', `échec pour 242061234567 clé ${'A'.repeat(40)} n°${k}`);
+    const e = s.instantane().erreurs;
+    assert.strictEqual(e.length, 5);
+    assert(!/\d{6,}/.test(e[0].message) && !/A{32}/.test(e[0].message), e[0].message);
+    assert(/n°7/.test(e[0].message), 'la plus récente en premier');
+    s.illisible(); s.illisible();
+    assert.strictEqual(s.instantane().illisibles, 2);
+  });
+
+  await test('test du bot depuis le site : message envoyé dans la conversation « moi-même » ; raisons claires sinon ; statistiques lisibles', () => avec({}, async (w, srv) => {
+    const envoyes = [];
+    const { creer: creerSuivi } = require('../lib/suivi');
+    const suivi = creerSuivi();
+    w.session.sessions.set(ID, { id: ID, ouverte: true, suivi, sock: { user: { id: '242061234567:7@s.whatsapp.net' }, enAttente: false, sendMessage: async (jid, c) => envoyes.push({ jid, c }) } });
+    w.session.sessions.set(ID2, { id: ID2, ouverte: false, sock: { user: { id: '242069999999:1@s.whatsapp.net' } } });
+    w.session.sessions.set(ID3, { id: ID3, ouverte: true, sock: { user: { id: '242068888888:1@s.whatsapp.net' }, enAttente: true, sendMessage: async () => { throw new Error('refus'); } } });
+    // signature obligatoire
+    assert.strictEqual((await appel(srv, { chemin: `/engine/instances/${ID}/test`, sansSignature: true })).statut, 401);
+    assert.strictEqual(envoyes.length, 0);
+    // instance connectée
+    let r = await appel(srv, { chemin: `/engine/instances/${ID}/test` });
+    assert.strictEqual(r.statut, 200); assert.strictEqual(r.json.ok, true); assert.strictEqual(r.json.enAttente, false);
+    assert.strictEqual(envoyes.length, 1);
+    assert.strictEqual(envoyes[0].jid, '242061234567@s.whatsapp.net');
+    assert(/Test Kernel Connect/.test(envoyes[0].c.text) && /\.ping/.test(envoyes[0].c.text));
+    // en sommeil et envoi refusé : raison claire, pas d'erreur technique
+    r = await appel(srv, { chemin: `/engine/instances/${ID3}/test` });
+    assert.deepStrictEqual(r.json, { ok: false, raison: 'envoi_refuse' }); assert.strictEqual(r.statut, 200);
+    // pas connectée / inconnue
+    assert.deepStrictEqual((await appel(srv, { chemin: `/engine/instances/${ID2}/test` })).json, { ok: false, raison: 'non_connectee' });
+    assert.deepStrictEqual((await appel(srv, { chemin: '/engine/instances/44444444-4444-4444-8444-444444444444/test' })).json, { ok: false, raison: 'inconnue' });
+    assert.strictEqual((await appel(srv, { chemin: '/engine/instances/pas-un-uuid/test' })).statut, 400);
+    // en sommeil : le message le dit
+    w.session.sessions.get(ID).sock.enAttente = true;
+    r = await appel(srv, { chemin: `/engine/instances/${ID}/test` });
+    assert.strictEqual(r.json.enAttente, true); assert(/\.start/.test(envoyes[1].c.text));
+    // statistiques
+    suivi.commande('ping'); suivi.commande('ping'); suivi.erreur('sticker', 'échec 242061234567');
+    r = await appel(srv, { methode: 'GET', chemin: `/engine/instances/${ID}/status` });
+    assert.strictEqual(r.statut, 200);
+    assert(r.json.connue && r.json.connectee && r.json.enAttente === true);
+    assert.deepStrictEqual(r.json.topCommandes, [{ nom: 'ping', n: 2 }]);
+    assert.strictEqual(r.json.erreurs.length, 1);
+    assert(!/242061234567/.test(JSON.stringify(r.json)), 'aucun numéro dans la réponse');
+    assert.deepStrictEqual((await appel(srv, { methode: 'GET', chemin: '/engine/instances/44444444-4444-4444-8444-444444444444/status' })).json, { connue: false });
+    // une session sans suivi (ancienne) : chiffres à zéro
+    r = await appel(srv, { methode: 'GET', chemin: `/engine/instances/${ID2}/status` });
+    assert.strictEqual(r.json.commandesTraitees, 0); assert.deepStrictEqual(r.json.topCommandes, []);
+  }));
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();
