@@ -428,6 +428,32 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     await handler.traiter(sock, citation('INCONNU', '.vueunique'));
     assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
   });
+  await test('sticker lié à vv2 : la cible est la vue unique citée (pas le sticker), le média part chez le propriétaire, AUCUNE réponse dans la conversation', async () => {
+    const utils = require('../lib/utils'), cache = require('../lib/cache');
+    const origine = { key: { remoteJid: PROP, id: 'ORIG-VV2', participant: MEMBRE }, message: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } } } };
+    cache.ajouter(origine);
+    const octets = Buffer.from('photo-de-test');
+    const st = { fileSha256: Buffer.from('sha-sticker-vv2'), contextInfo: { stanzaId: 'ORIG-VV2', participant: MEMBRE, quotedMessage: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg' } } } } } };
+    const msgSticker = { key: { remoteJid: PROP, fromMe: true, id: 'ST' + ++n }, message: { stickerMessage: st }, pushName: 'Moi', messageTimestamp: 1 };
+    const trouve = utils.messageMedia(msgSticker);
+    assert(trouve && trouve.key.id === 'ORIG-VV2' && trouve.type === 'imageMessage', 'le sticker déclencheur n’est pas la cible');
+    // un sticker seul (sans citation) reste un média à part entière
+    assert(utils.messageMedia({ key: { remoteJid: PROP, id: 'S0' }, message: { stickerMessage: { fileSha256: Buffer.from('x') } } }).type === 'stickerMessage');
+    // exécution complète avec téléchargement simulé
+    // (le module Baileys est figé : on remplace temporairement son entrée dans le cache de modules)
+    const entree = require.cache[require.resolve('@whiskeysockets/baileys')], exportsAvant = entree.exports;
+    entree.exports = new Proxy(exportsAvant, { get: (c, k) => (k === 'downloadMediaMessage' ? async () => octets : c[k]) });
+    try {
+      require('../lib/store').set('stickercmd', Buffer.from(st.fileSha256).toString('base64'), { cmd: 'vv2' });
+      envoyes.length = 0;
+      await handler.traiter(sock, msgSticker);
+      const photo = envoyes.find((e) => e.c && e.c.image);
+      assert(photo && Buffer.compare(photo.c.image, octets) === 0, 'la photo part chez le propriétaire : ' + JSON.stringify(envoyes.map((e) => e.c)));
+      assert.strictEqual(photo.jid, require('../lib/statuts').jidProprietaire(sock), 'envoyée dans les messages privés du propriétaire');
+      assert(!/Envoyé au propriétaire/.test(texteDe(envoyes)), 'aucune confirmation dans la conversation');
+      assert(envoyes.every((e) => e.c && e.c.image), 'rien d’autre que la photo n’est envoyé');
+    } finally { entree.exports = exportsAvant; }
+  });
   await test('diagnostic : réservé au propriétaire ; outils + structure ; une commande ; essai à vide qui sépare réussites, silences, erreurs et commandes dangereuses', async () => {
     const diag = require('../lib/diagnostic');
     const fetchAvant = global.fetch;

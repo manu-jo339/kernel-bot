@@ -201,15 +201,16 @@ module.exports = [
     name: 'vv2',
     desc: 'Envoie la vue unique en privé au propriétaire',
     ownerOnly: true,
-    run: async ({ sock, msg, reply, config }) => {
+    run: async ({ sock, msg, reply }) => {
       if (!messageMedia(msg)) return reply('✏️ Réponds à une image, une vidéo ou un vocal en vue unique.');
       const f = await telecharger(sock, msg);
-      const moi = ((sock.secondaire ? null : config.OWNERS[0]) || sock.user.id.split(':')[0].split('@')[0]) + '@s.whatsapp.net';
+      // Discret : le média part chez le propriétaire et rien n'est écrit dans la conversation (sauf si ce n'est pas un média pris en charge)
+      const moi = require('../lib/statuts').jidProprietaire(sock);
       const legende = '👁️ Vue unique récupérée';
       if (f.type === 'image') await sock.sendMessage(moi, { image: f.buffer, caption: legende });
       else if (f.type === 'video') await sock.sendMessage(moi, { video: f.buffer, caption: legende });
       else if (f.type === 'audio') await sock.sendMessage(moi, { audio: f.buffer, mimetype: f.mime || 'audio/ogg; codecs=opus', ptt: true });
-      await reply('✅ Envoyé au propriétaire en privé.');
+      else await reply('⚠️ Ce n’est pas une image, une vidéo ou un vocal.');
     },
   },
 ];
