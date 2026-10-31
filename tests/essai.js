@@ -183,8 +183,10 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(!aImage(await dire(MEMBRE, '.aide ping')), 'aide sans image');
     assert(aImage(await dire(MEMBRE, '.info')) && aImage(await dire(MEMBRE, '.enmarche')) && aImage(await dire(PROP, '.etatsysteme')), 'info/uptime/système avec image');
     const vues = new Set();
-    for (let i = 0; i < 12; i++) vues.add(require('crypto').createHash('md5').update((await dire(MEMBRE, '.enmarche')).find((x) => x.c.image).c.image).digest('hex'));
-    assert(vues.size === 10, 'dix images différentes en boucle : ' + vues.size);
+    const nb = Math.min(40, fs.readdirSync(path.join(__dirname, '..', 'assets', 'menu')).filter((n) => /\.(jpe?g|png)$/i.test(n)).length);
+    assert(nb >= 30, 'au moins 30 images d’en-tête : ' + nb);
+    for (let i = 0; i < nb + 2; i++) vues.add(require('crypto').createHash('md5').update((await dire(MEMBRE, '.enmarche')).find((x) => x.c.image).c.image).digest('hex'));
+    assert(vues.size === nb, `${nb} images différentes en boucle : ` + vues.size);
   });
   await test('utilisateur : nom du .env dans le menu, jamais le numéro', async () => {
     const config = require('../config');
