@@ -786,6 +786,39 @@ const avec = async (opts, fn) => { const w = monde(opts); const s = await serveu
     assert.strictEqual(r.json.commandesTraitees, 0); assert.deepStrictEqual(r.json.topCommandes, []);
   }));
 
+  await test('réglages d\'antisuppression depuis le site : propres à chaque instance, valeurs contrôlées, jamais de demi-écriture', () => avec({}, async (w, srv) => {
+    if (!process.env.DATA_DIR) process.env.DATA_DIR = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'kernel-moteur-'));
+    const contexte = require('../lib/contexte');
+    const faux = (id) => { const sock = { sessionId: id, user: { id: '242061234567:7@s.whatsapp.net' }, reglagesSite: { MODE: 'private' } }; sock.dansSession = (fn) => contexte.executerPour(sock, fn); return { id, ouverte: true, sock }; };
+    w.session.sessions.set(ID, faux(ID));
+    w.session.sessions.set(ID2, faux(ID2));
+    const lire = async (id) => (await appel(srv, { methode: 'GET', chemin: `/engine/instances/${id}/reglages` })).json;
+    const ecrire = (id, corps) => appel(srv, { chemin: `/engine/instances/${id}/reglages`, corps });
+    // signature obligatoire
+    assert.strictEqual((await appel(srv, { methode: 'GET', chemin: `/engine/instances/${ID}/reglages`, sansSignature: true })).statut, 401);
+    // départ : tout désactivé, destination « ici »
+    assert.deepStrictEqual(await lire(ID), { ok: true, antisuppression: { prive: false, groupes: false, statuts: false, vers: 'ici' } });
+    // changement partiel : seuls les champs envoyés bougent
+    let r = await ecrire(ID, { antisuppression: { prive: true, vers: 'proprio' } });
+    assert.strictEqual(r.statut, 200);
+    assert.deepStrictEqual(r.json, { ok: true, antisuppression: { prive: true, groupes: false, statuts: false, vers: 'proprio' } });
+    r = await ecrire(ID, { antisuppression: { statuts: true } });
+    assert.deepStrictEqual(r.json.antisuppression, { prive: true, groupes: false, statuts: true, vers: 'proprio' });
+    // l'autre instance n'a rien vu
+    assert.deepStrictEqual((await lire(ID2)).antisuppression, { prive: false, groupes: false, statuts: false, vers: 'ici' });
+    // valeurs refusées (400) et RIEN n'est écrit, même si une partie était valable
+    for (const mauvais of [{ antisuppression: { prive: 'oui' } }, { antisuppression: { prive: false, vers: 'ailleurs' } }, { antisuppression: { prive: false, inconnu: 1 } }, { antisuppression: {} }, { antisuppression: [] }, {}, { antisuppression: { groupes: 1 } }]) {
+      assert.strictEqual((await ecrire(ID, mauvais)).statut, 400, JSON.stringify(mauvais));
+    }
+    assert.deepStrictEqual((await lire(ID)).antisuppression, { prive: true, groupes: false, statuts: true, vers: 'proprio' }, 'rien n\'a changé après les refus');
+    // instance inconnue : réponse lisible (pas d'erreur technique)
+    assert.deepStrictEqual(await lire('44444444-4444-4444-8444-444444444444'), { ok: false, raison: 'inconnue' });
+    assert.deepStrictEqual((await ecrire('44444444-4444-4444-8444-444444444444', { antisuppression: { prive: true } })).json, { ok: false, raison: 'inconnue' });
+    assert.strictEqual((await appel(srv, { methode: 'GET', chemin: '/engine/instances/pas-un-uuid/reglages' })).statut, 400);
+    // nettoyage (la base de l'essai est partagée avec les autres essais)
+    for (const id of [ID, ID2]) await ecrire(id, { antisuppression: { prive: false, groupes: false, statuts: false, vers: 'ici' } });
+  }));
+
   console.log(`\n${ok} essais réussis`);
   process.exit(process.exitCode || 0);
 })();
