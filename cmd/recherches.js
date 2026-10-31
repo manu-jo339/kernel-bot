@@ -29,6 +29,50 @@ const indisponible = (reply) => reply('⚠️ Le service est indisponible pour l
 const WMO = { 0: ['☀️', 'Ciel dégagé'], 1: ['🌤️', 'Plutôt dégagé'], 2: ['⛅', 'Partiellement nuageux'], 3: ['☁️', 'Couvert'], 45: ['🌫️', 'Brouillard'], 48: ['🌫️', 'Brouillard givrant'], 51: ['🌦️', 'Bruine légère'], 53: ['🌦️', 'Bruine'], 55: ['🌦️', 'Bruine dense'], 56: ['🌧️', 'Bruine verglaçante'], 57: ['🌧️', 'Bruine verglaçante'], 61: ['🌧️', 'Pluie faible'], 63: ['🌧️', 'Pluie modérée'], 65: ['🌧️', 'Forte pluie'], 66: ['🌧️', 'Pluie verglaçante'], 67: ['🌧️', 'Pluie verglaçante'], 71: ['🌨️', 'Neige faible'], 73: ['🌨️', 'Neige'], 75: ['❄️', 'Forte neige'], 77: ['❄️', 'Grains de neige'], 80: ['🌦️', 'Averses faibles'], 81: ['🌧️', 'Averses'], 82: ['⛈️', 'Fortes averses'], 85: ['🌨️', 'Averses de neige'], 86: ['❄️', 'Fortes averses de neige'], 95: ['⛈️', 'Orage'], 96: ['⛈️', 'Orage avec grêle'], 99: ['⛈️', 'Orage violent avec grêle'] };
 const wmo = (c) => WMO[c] || ['🌡️', 'Conditions variables'];
 const JOURS = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+const cacheMeteo = new Map();
+async function meteoOpenMeteo(ville) {
+  const g = await web.json(`https://geocoding-api.open-meteo.com/v1/search?name=${enc(ville)}&count=1&language=fr&format=json`);
+  const lieu = g.results?.[0];
+  if (!lieu) return { introuvable: true };
+  const m = await web.json(`https://api.open-meteo.com/v1/forecast?latitude=${lieu.latitude}&longitude=${lieu.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=4`);
+  const c = m.current, d = m.daily;
+  const [emo, txt] = wmo(c.weather_code);
+  const jours = d.time.slice(1, 4).map((t, i) => {
+    const [e] = wmo(d.weather_code[i + 1]);
+    const dt = new Date(t + 'T12:00:00Z');
+    return `${e} ${JOURS[dt.getUTCDay()]} ${Math.round(d.temperature_2m_min[i + 1])}° / ${Math.round(d.temperature_2m_max[i + 1])}° — pluie ${d.precipitation_probability_max[i + 1] ?? 0} %`;
+  });
+  return { source: 'Open-Meteo', nom: lieu.name, pays: lieu.country, emo, txt, temp: Math.round(c.temperature_2m), ressenti: Math.round(c.apparent_temperature), hum: c.relative_humidity_2m, vent: Math.round(c.wind_speed_10m), jours };
+}
+// Relais : wttr.in (gratuit, sans clé). Ses codes sont ceux de WorldWeatherOnline.
+const emojiWwo = (c) => {
+  c = Number(c);
+  if (c === 113) return '☀️';
+  if (c === 116) return '⛅';
+  if ([119, 122].includes(c)) return '☁️';
+  if ([143, 248, 260].includes(c)) return '🌫️';
+  if ([200, 386, 389, 392, 395].includes(c)) return '⛈️';
+  if ([179, 182, 227, 230, 323, 326, 329, 332, 335, 338, 350, 368, 371, 374, 377].includes(c)) return '❄️';
+  return c >= 176 ? '🌧️' : '🌡️';
+};
+async function meteoWttr(ville) {
+  const j = await web.json(`https://wttr.in/${enc(ville)}?format=j1&lang=fr`);
+  const c = j.current_condition?.[0];
+  if (!c || !j.weather?.length) throw new Error('réponse inattendue');
+  const zone = j.nearest_area?.[0];
+  const mots = (x) => x?.[0]?.value || '';
+  const jours = j.weather.slice(1, 4).map((w) => {
+    const dt = new Date(w.date + 'T12:00:00Z');
+    const midi = w.hourly?.[4] || w.hourly?.[0] || {};
+    const pluie = Math.max(0, ...(w.hourly || []).map((h) => Number(h.chanceofrain) || 0));
+    return `${emojiWwo(midi.weatherCode)} ${JOURS[dt.getUTCDay()]} ${Math.round(w.mintempC)}° / ${Math.round(w.maxtempC)}° — pluie ${pluie} %`;
+  });
+  return {
+    source: 'wttr.in', nom: mots(zone?.areaName) || ville, pays: mots(zone?.country), emo: emojiWwo(c.weatherCode),
+    txt: mots(c.lang_fr) || mots(c.weatherDesc) || 'Conditions variables', temp: Math.round(c.temp_C), ressenti: Math.round(c.FeelsLikeC),
+    hum: c.humidity, vent: Math.round(c.windspeedKmph), jours,
+  };
+}
 
 // ───────────── Blagues (propres, pour tous) ─────────────
 const BLAGUES = [
@@ -93,22 +137,19 @@ module.exports = [
     desc: 'Météo actuelle et prévisions sur 3 jours : .meteo Pointe-Noire',
     run: async ({ args, reply }) => {
       const ville = args.join(' ').trim() || 'Brazzaville';
-      try {
-        const g = await web.json(`https://geocoding-api.open-meteo.com/v1/search?name=${enc(ville)}&count=1&language=fr&format=json`);
-        const lieu = g.results?.[0];
-        if (!lieu) return reply(`❓ Ville « ${ville} » introuvable.`);
-        const m = await web.json(`https://api.open-meteo.com/v1/forecast?latitude=${lieu.latitude}&longitude=${lieu.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=4`);
-        const c = m.current, d = m.daily;
-        const [emo, txt] = wmo(c.weather_code);
-        const jours = d.time.slice(1, 4).map((t, i) => {
-          const [e] = wmo(d.weather_code[i + 1]);
-          const dt = new Date(t + 'T12:00:00Z');
-          return `${e} ${JOURS[dt.getUTCDay()]} ${Math.round(d.temperature_2m_min[i + 1])}° / ${Math.round(d.temperature_2m_max[i + 1])}° — pluie ${d.precipitation_probability_max[i + 1] ?? 0} %`;
-        });
-        await reply(`${emo} *Météo à ${lieu.name}${lieu.country ? ', ' + lieu.country : ''}*\n${txt}\n🌡️ *${Math.round(c.temperature_2m)} °C* (ressenti ${Math.round(c.apparent_temperature)} °C)\n💧 Humidité ${c.relative_humidity_2m} % · 💨 Vent ${Math.round(c.wind_speed_10m)} km/h\n\n*Prochains jours*\n${jours.join('\n')}\n\n_Données Open-Meteo_`);
-      } catch {
-        await indisponible(reply);
+      const cle = ville.toLowerCase();
+      const gardee = cacheMeteo.get(cle);
+      let m = gardee && Date.now() - gardee.t < 10 * 60e3 ? gardee.m : null; // 10 min : évite de solliciter le service pour la même ville
+      if (!m) {
+        // Open-Meteo d'abord ; si le service refuse ce serveur (limite, panne), wttr.in prend le relais
+        for (const [nom, source] of [['Open-Meteo', meteoOpenMeteo], ['wttr.in', meteoWttr]]) {
+          try { m = await source(ville); break; } catch (e) { console.error(`[meteo] ${nom} : ${e.message}`); }
+        }
+        if (m && !m.introuvable) cacheMeteo.set(cle, { t: Date.now(), m });
       }
+      if (!m) return indisponible(reply);
+      if (m.introuvable) return reply(`❓ Ville « ${ville} » introuvable.`);
+      await reply(`${m.emo} *Météo à ${m.nom}${m.pays ? ', ' + m.pays : ''}*\n${m.txt}\n🌡️ *${m.temp} °C* (ressenti ${m.ressenti} °C)\n💧 Humidité ${m.hum} % · 💨 Vent ${m.vent} km/h\n\n*Prochains jours*\n${m.jours.join('\n')}\n\n_Données ${m.source}_`);
     },
   },
   {

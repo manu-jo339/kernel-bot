@@ -612,6 +612,19 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(/privé/.test(texteDe(await dire(MEMBRE, '.motdepasse'))));
     const pv = texteDe(await dire(MEMBRE, '.motdepasse 20', false)); assert(/20 caractères/.test(pv), pv);
   });
+  await test('tagall / tagadmin : en-tête (titre, message, groupe, auteur, nombre) puis liste ; mentions complètes', async () => {
+    const r = await dire(ADMIN, '.tagall réunion à 18h');
+    const e = r.find((x) => x.c.text && /APPEL GÉNÉRAL/.test(x.c.text));
+    assert(e, JSON.stringify(r.map((x) => x.c)));
+    assert(/💬 \*réunion à 18h\*/.test(e.c.text) && /🏷️ Groupe : Test/.test(e.c.text) && /👤 Par : @/.test(e.c.text) && /👥 Membres : 4/.test(e.c.text), e.c.text);
+    assert.strictEqual((e.c.text.match(/▸ @/g) || []).length, 4, 'une ligne par membre');
+    for (const j of [BOT, ADMIN, MEMBRE, PROP]) assert(e.c.mentions.includes(j), 'mention de ' + j);
+    // sans texte : pas de ligne de message
+    const sans = (await dire(ADMIN, '.tagall')).find((x) => /APPEL GÉNÉRAL/.test(x.c.text || ''));
+    assert(sans && !/💬/.test(sans.c.text), 'pas de ligne de message sans texte');
+    const a = (await dire(ADMIN, '.tagadmin urgent')).find((x) => /ADMINISTRATEURS/.test(x.c.text || ''));
+    assert(a && /👥 Administrateurs : 2/.test(a.c.text) && (a.c.text.match(/▸ @/g) || []).length === 2, a && a.c.text);
+  });
   await test('rappel : enregistré puis envoyé à l’échéance', async () => {
     const jobs = require('../lib/jobs');
     jobs.demarrer(() => sock);
@@ -1167,6 +1180,14 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(/Pointe-Noire, Congo/.test(met) && /27 °C/.test(met) && /Orage/.test(met) === false && /80 %/.test(met) && /Couvert/.test(met), met);
     route(/geocoding-api\.open-meteo\.com/, () => rJson({}));
     assert(/introuvable/.test(texteDe(await dire(MEMBRE, '.meteo Zzzzz'))));
+    // Open-Meteo refuse ce serveur (429) : wttr.in prend le relais, avec un message complet
+    route(/geocoding-api\.open-meteo\.com/, () => rJson({}, 429));
+    route(/wttr\.in\//, () => rJson({ current_condition: [{ temp_C: '31', FeelsLikeC: '35', humidity: '70', windspeedKmph: '9', weatherCode: '116', lang_fr: [{ value: 'Partiellement nuageux' }] }], nearest_area: [{ areaName: [{ value: 'Brazzaville' }], country: [{ value: 'Congo' }] }], weather: [1, 2, 3, 4].map((i) => ({ date: '2026-10-3' + i, mintempC: '23', maxtempC: '30', hourly: [{ chanceofrain: '10', weatherCode: '113' }, { chanceofrain: '60', weatherCode: '176' }, {}, {}, { chanceofrain: '20', weatherCode: '116' }] })) }));
+    const relais = texteDe(await dire(MEMBRE, '.meteo Brazzaville'));
+    assert(/Brazzaville, Congo/.test(relais) && /31 °C/.test(relais) && /Partiellement nuageux/.test(relais) && /pluie 60 %/.test(relais) && /wttr\.in/.test(relais) && !/indisponible/.test(relais), relais);
+    // les deux services en panne : message clair
+    route(/wttr\.in\//, () => rJson({}, 503));
+    assert(/indisponible/.test(texteDe(await dire(MEMBRE, '.meteo Kinshasa'))));
     route(/wikipedia\.org\/w\/api\.php/, () => rJson(['q', ['Brazzaville'], [], []]));
     route(/wikipedia\.org\/api\/rest_v1\/page\/summary/, () => rJson({ title: 'Brazzaville', description: 'capitale du Congo', extract: 'Brazzaville est la capitale de la République du Congo.', content_urls: { desktop: { page: 'https://fr.wikipedia.org/wiki/Brazzaville' } } }));
     assert(/capitale de la République du Congo/.test(texteDe(await dire(MEMBRE, '.wiki Brazzaville'))));

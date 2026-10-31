@@ -1,6 +1,6 @@
 // Commandes de groupe — MWENOBANGUE Labs
 const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-const { numero, pause, messageCite, cibles, numeroDe, parseDuree, formatDuree, dateLocale } = require('../lib/utils');
+const { numero, pause, messageCite, extraireTexte, cibles, numeroDe, parseDuree, formatDuree, dateLocale } = require('../lib/utils');
 const groupes = require('../lib/groupes');
 const corbeille = require('../lib/corbeille');
 const jobs = require('../lib/jobs');
@@ -116,6 +116,24 @@ async function remettre(sock, jid, entrees, reply, nomGroupe) {
   }
 }
 
+// Mention de masse : un en-tête clair (qui appelle, dans quel groupe, combien de personnes), le message, puis la liste
+const BARRE = '━━━━━━━━━━━━━━━━';
+async function appelGroupe({ sock, jid, msg, args, metadata, reply, sender, candidats }, participants, { titre, icone, libelle }) {
+  if (!metadata || !participants) return reply('⚠️ Impossible de lire les membres du groupe.');
+  const ids = participants.map((p) => p.id);
+  const cite = messageCite(msg);
+  const message = (args.join(' ') || (cite ? extraireTexte(cite.message) : '')).trim();
+  const moi = metadata.participants.map((p) => p.id).find((id) => [sender, ...(candidats || [])].filter(Boolean).includes(id)) || sender;
+  const entete = [`${icone} *${titre}*`, BARRE];
+  if (message) entete.push(`💬 *${message}*`, '');
+  entete.push(`🏷️ Groupe : ${metadata.subject || '—'}`);
+  if (moi) entete.push(`👤 Par : ${mention(moi)}`);
+  entete.push(`👥 ${libelle} : ${ids.length}`, BARRE);
+  const liste = ids.map((m) => `▸ ${mention(m)}`).join('\n');
+  const mentions = moi && !ids.includes(moi) ? [...ids, moi] : ids;
+  await sock.sendMessage(jid, { text: `${entete.join('\n')}\n${liste}\n${BARRE}`, mentions });
+}
+
 module.exports = [
   // ───────────── Mentions ─────────────
   {
@@ -124,26 +142,14 @@ module.exports = [
     aliases: ['tous'],
     desc: 'Mentionne tous les membres',
     adminOnly: true,
-    run: async ({ sock, jid, args, metadata, reply }) => {
-      if (!metadata) return reply('⚠️ Impossible de lire les membres du groupe.');
-      const membres = metadata.participants.map((p) => p.id);
-      const message = args.join(' ') || 'Annonce';
-      const liste = membres.map((m) => `• ${mention(m)}`).join('\n');
-      await sock.sendMessage(jid, { text: `📣 *${message}*\n\n${liste}`, mentions: membres });
-    },
+    run: async (ctx) => appelGroupe(ctx, ctx.metadata && ctx.metadata.participants, { titre: 'APPEL GÉNÉRAL', icone: '📣', libelle: 'Membres' }),
   },
   {
     ...base,
     name: 'tagadmin',
     aliases: ['admins'],
     desc: 'Mentionne tous les administrateurs',
-    run: async ({ sock, jid, args, metadata, reply }) => {
-      if (!metadata) return reply('⚠️ Impossible de lire les membres du groupe.');
-      const admins = metadata.participants.filter(estAdmin).map((p) => p.id);
-      const message = args.join(' ') || 'Appel aux administrateurs';
-      const liste = admins.map((m) => `• ${mention(m)}`).join('\n');
-      await sock.sendMessage(jid, { text: `🛡️ *${message}*\n\n${liste}`, mentions: admins });
-    },
+    run: async (ctx) => appelGroupe(ctx, ctx.metadata && ctx.metadata.participants.filter(estAdmin), { titre: 'APPEL AUX ADMINISTRATEURS', icone: '🛡️', libelle: 'Administrateurs' }),
   },
   {
     ...base,
