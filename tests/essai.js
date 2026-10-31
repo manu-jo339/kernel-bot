@@ -1514,6 +1514,39 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     reglagesT.ecrire(RAZ_AS);
   });
 
+  await test('réglages PAR NUMÉRO sur un moteur partagé : l\'antisuppression d\'un numéro ne touche pas les autres ; « propriétaire » = son propre numéro', async () => {
+    const contexteT = require('../lib/contexte');
+    const ID_A = '11111111-1111-4111-8111-111111111111', ID_B = '22222222-2222-4222-8222-222222222222';
+    const NUM_A = '242071111111', NUM_B = '242072222222';
+    const envA = [], envB = [];
+    const faux = (id, num, env) => ({ sessionId: id, secondaire: true, reglagesSite: { MODE: 'public' }, user: { id: `${num}:1@s.whatsapp.net` }, sendMessage: async (jid, c) => { env.push({ jid, c }); return { key: { id: 'X' } }; } });
+    const sockA = faux(ID_A, NUM_A, envA), sockB = faux(ID_B, NUM_B, envB);
+    sockA.dansSession = (fn) => contexteT.executerPour(sockA, fn);
+    sockB.dansSession = (fn) => contexteT.executerPour(sockB, fn);
+    const global0 = JSON.stringify(reglagesT.lire());
+    // A active l'antisuppression (privé, vers propriétaire)
+    sockA.dansSession(() => reglagesT.ecrire({ antisuppressionPrive: true, antisuppressionVers: 'proprio' }));
+    assert.strictEqual(sockA.dansSession(() => reglagesT.antisuppressionEtat().prive), true);
+    assert.strictEqual(sockB.dansSession(() => reglagesT.antisuppressionEtat().prive), false, 'B : pas touché');
+    assert.strictEqual(JSON.stringify(reglagesT.lire()), global0, 'le moteur (hors session) : pas touché');
+    // un message supprimé chez A est renvoyé à A (son numéro), pas chez les propriétaires du moteur ; chez B : rien
+    const PV2 = '242075555555@s.whatsapp.net';
+    const orig = { key: { remoteJid: PV2, id: 'ISO1', fromMe: false }, message: { conversation: 'secret A' }, messageTimestamp: 1 };
+    cacheT.ajouter(orig);
+    const revoque = (id) => ({ key: { remoteJid: PV2, id: 'RV' + id, fromMe: false }, message: { protocolMessage: { type: 0, key: { id, remoteJid: PV2 } } }, messageTimestamp: 1 });
+    await sockB.dansSession(() => evenements.surProtocole(sockB, revoque('ISO1')));
+    assert.strictEqual(envB.length, 0, 'B : antisuppression désactivée chez lui, rien ne part');
+    await sockA.dansSession(() => evenements.surProtocole(sockA, revoque('ISO1')));
+    assert(envA.length > 0 && envA.every((x) => x.jid === `${NUM_A}@s.whatsapp.net`), 'A : renvoyé à SON numéro (' + JSON.stringify(envA.map((x) => x.jid)) + ')');
+    assert(!envA.some((x) => x.jid === PROP), 'jamais chez le propriétaire du moteur');
+    // le bot principal (identifiant « principal ») garde les réglages du moteur
+    const principal = { sessionId: 'principal', reglagesSite: undefined };
+    assert.strictEqual(contexteT.executerPour(principal, () => contexteT.courant()), null);
+    reglagesT.ecrire({ presenceMode: 'ecrit' });
+    assert.strictEqual(sockA.dansSession(() => reglagesT.lire().presenceMode), 'aucune', 'le réglage du moteur n\'entre pas dans une session de la plateforme');
+    reglagesT.ecrire({ presenceMode: 'aucune' });
+  });
+
   // Groupe d'essai « vivant » : les ajouts et retraits modifient la liste des membres
   const CREA = '242060000009@s.whatsapp.net', ADM2 = '242062222223@s.whatsapp.net', M1 = '242064444441@s.whatsapp.net', M2 = '242064444442@s.whatsapp.net', M3 = '255700000003@s.whatsapp.net';
   const sauvegarde = { meta: sock.groupMetadata, maj: sock.groupParticipantsUpdate };
