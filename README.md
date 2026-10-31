@@ -73,3 +73,10 @@ C'est terminé : ton bot répond maintenant sur ce numéro. Tape `.menu` dans Wh
 - **Tes réglages** (avertissements, niveaux…) sont remis à zéro quand Render redémarre le service. La connexion WhatsApp, elle, est conservée.
 - **Confidentialité** : la connexion WhatsApp de ton bot est gardée par Kernel Connect, pas par ton Render. La personne qui administre le site peut donc y accéder. Utilise de préférence un numéro dédié au bot, et seulement si tu fais confiance à cette personne.
 - **Ton bot ne gère que tes instances.** Personne d'autre ne peut l'utiliser, et tu ne vois pas celles des autres.
+
+## Pour les développeurs
+
+- **Variables d'environnement** : toutes sont décrites, avec leurs valeurs par défaut, dans `.env.example`. Sur Render, tu n'as besoin que de `SITE_URL` et `ENGINE_SECRET`.
+- **Moteur de la plateforme (Supabase)** : `ENGINES_KEY` (la même valeur que sur Vercel) permet de lire les clés d'IA que les utilisateurs enregistrent sur le site. Un moteur personnel relié au site n'en a pas besoin.
+- **Liste des commandes** : le site affiche la page *Commandes* à partir d'un fichier généré. Après avoir ajouté, renommé ou supprimé une commande, lance `npm run commandes ../kernel-connect/data/commandes.json` (ou sans argument, puis copie `commandes-publiques.json` à cet endroit).
+- **Tests** : `npm test`.
