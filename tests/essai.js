@@ -51,9 +51,10 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     for (const n of ['expulser', 'tous', 'bannir', 'antilien', 'avertir', 'bienvenue', 'menu', 'aide', 'toutmenu', 'proprietaire', 'createur', 'redemarrer', 'connecter', 'liersticker', 'enmarche', 'etatsysteme', 'vueunique', 'rang', 'classement', 'profil', 'antimention', 'antimentiongroupe', 'antipromotion', 'lireauto'])
       assert(handler.commands.has(n), 'manque ' + n);
   });
-  await test('nos noms seulement : les anciens noms (style OVL) ne sont plus reconnus par défaut', () => {
-    for (const a of ['kick', 'tagall', 'antidelete', 'welcome', 'allmenu']) assert(!handler.commands.has(a), a + ' ne doit plus exister');
-    assert(handler.commands.has('expulser') && handler.commands.has('antisuppression') && handler.commands.has('bienvenue'));
+  await test('noms français et anciens noms (style OVL) : les deux mènent à la même commande par défaut', () => {
+    for (const [ancien, nouveau] of [['kick', 'expulser'], ['kickall', 'expulsertous'], ['tagall', 'tous'], ['antidelete', 'antisuppression'], ['welcome', 'bienvenue'], ['vv', 'vueunique'], ['vv2', 'vueuniqueprive']])
+      assert.strictEqual(handler.commands.get(ancien), handler.commands.get(nouveau), ancien + ' doit mener à ' + nouveau);
+    assert(handler.commands.get('expulser').name === 'expulser', 'le nom affiché reste le nom français');
   });
   await test('permissions : celui qui a SON bot a tout sauf diagnostic ; un titulaire sur serveur partagé a tout sauf le serveur ; les autres : commandes ouvertes', () => {
     const perm = require('../lib/permissions');
@@ -472,20 +473,27 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert.strictEqual(res.silence.length, 0, 'chaque réaction répond (même si l’animation est indisponible) : ' + res.silence.map((r) => r.nom));
     } finally { global.fetch = fetchAvant; console.error = erreur; if (chemin === undefined) delete process.env.YTDLP_PATH; else process.env.YTDLP_PATH = chemin; }
   });
-  await test('ANCIENS_NOMS=oui : les anciens noms mènent à nos commandes (option pour les habitués), puis retour à nos noms seuls', async () => {
+  await test('anciens noms (vv, vv2, kick, kickall…) : reconnus par défaut ; ANCIENS_NOMS=non les retire, puis retour', async () => {
     const anciens = require('../lib/renommage.json');
-    process.env.ANCIENS_NOMS = 'oui';
+    delete process.env.ANCIENS_NOMS;
+    handler.chargerCommandes();
+    const manquants = Object.entries(anciens).filter(([ancien, nouveau]) => handler.commands.has(nouveau) && !handler.commands.has(ancien)).map(([a]) => a);
+    assert.deepStrictEqual(manquants, [], 'anciens noms introuvables : ' + manquants.join(', '));
+    assert.strictEqual(handler.commands.get('antidelete'), handler.commands.get('antisuppression'));
+    assert.strictEqual(handler.commands.get('kick'), handler.commands.get('expulser'));
+    assert.strictEqual(handler.commands.get('kickall'), handler.commands.get('expulsertous'));
+    assert.strictEqual(handler.commands.get('vv'), handler.commands.get('vueunique'));
+    assert.strictEqual(handler.commands.get('vv2'), handler.commands.get('vueuniqueprive'));
+    process.env.ANCIENS_NOMS = 'non';
     try {
       handler.chargerCommandes();
-      const manquants = Object.entries(anciens).filter(([ancien, nouveau]) => handler.commands.has(nouveau) && !handler.commands.has(ancien)).map(([a]) => a);
-      assert.deepStrictEqual(manquants, [], 'anciens noms introuvables : ' + manquants.join(', '));
-      assert.strictEqual(handler.commands.get('antidelete'), handler.commands.get('antisuppression'));
-      assert.strictEqual(handler.commands.get('kick'), handler.commands.get('expulser'));
+      assert(!handler.commands.has('antidelete') && !handler.commands.has('kick') && !handler.commands.has('vv2'));
+      assert(handler.commands.has('expulser') && handler.commands.has('vueuniqueprive'));
     } finally {
       delete process.env.ANCIENS_NOMS;
       handler.chargerCommandes();
     }
-    assert(!handler.commands.has('antidelete') && !handler.commands.has('kick'));
+    assert(handler.commands.has('kick'));
   });
   await test('save : le statut d’origine gardé en mémoire est utilisé ; sinon message clair', async () => {
     const statuts = require('../lib/statuts');
