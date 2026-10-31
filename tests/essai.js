@@ -188,6 +188,30 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     for (let i = 0; i < nb + 2; i++) vues.add(require('crypto').createHash('md5').update((await dire(MEMBRE, '.enmarche')).find((x) => x.c.image).c.image).digest('hex'));
     assert(vues.size === nb, `${nb} images différentes en boucle : ` + vues.size);
   });
+  await test('thèmes du menu : 16 thèmes, chacun complet (accueil, catégorie, tout) ; en-tête de moins de 1024 signes ; choix par nom ou par numéro', async () => {
+    const menu = require('../lib/menu'), reglages = require('../lib/reglages');
+    const themeAvant = reglages.lire().theme;
+    const cles = Object.keys(menu.THEMES);
+    assert(cles.length >= 15, 'au moins 15 thèmes : ' + cles.length);
+    const liste = handler.liste;
+    for (const k of cles) {
+      const a = menu.accueil(k, liste, 'Test');
+      assert(a && !/undefined|\[object/.test(a) && /Général/.test(a) && /Test/.test(a), k + ' : accueil');
+      const c = menu.categorie(k, liste, 'groupe', 'Test');
+      assert(c && /expulser|tagall|tous/.test(c) && !/undefined/.test(c), k + ' : catégorie');
+      assert(!/undefined/.test(menu.tout(k, liste, 'Test')), k + ' : tout');
+      if (menu.THEMES[k].image) assert(a.slice(0, a.indexOf('\n\n')).length <= 1024, k + ' : en-tête trop long pour une légende');
+    }
+    // par nom, par numéro, liste avec le thème actuel coché
+    assert(/Néon/.test(texteDe(await dire(PROP, '.theme neon'))));
+    assert(reglages.lire().theme === 'neon');
+    const i = cles.indexOf('ancien') + 1;
+    assert(/OVL/.test(texteDe(await dire(PROP, '.theme ' + i))));
+    assert(reglages.lire().theme === 'ancien');
+    const l = texteDe(await dire(PROP, '.theme'));
+    assert(new RegExp(`✅ ${i}\\. `).test(l) && /theme cyber/.test(l), l);
+    reglages.ecrire({ theme: themeAvant }); // remet le thème des autres essais
+  });
   await test('utilisateur : nom du .env dans le menu, jamais le numéro', async () => {
     const config = require('../config');
     const avant = config.NOM_OWNER;

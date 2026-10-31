@@ -61,17 +61,22 @@ module.exports = [
   {
     ...base,
     name: 'theme',
-    desc: 'Change l’apparence du menu',
+    desc: 'Change l’apparence du menu (liste, nom ou numéro)',
     ownerOnly: true,
     run: async ({ args, reply, config }) => {
-      const choix = (args[0] || '').toLowerCase();
-      if (menu.THEMES[choix]) {
+      const cles = Object.keys(menu.THEMES);
+      const demande = (args[0] || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      // « .theme 7 » ou « .theme neon »
+      const choix = /^\d+$/.test(demande) ? cles[Number(demande) - 1] : cles.find((k) => k === demande);
+      if (choix) {
         reglages.ecrire({ theme: choix });
         return reply(`🎨 Thème « ${menu.THEMES[choix].nom} » activé. Tape ${config.PREFIXE}menu pour le voir.`);
       }
+      const actuel = theme();
       await reply(
-        `🎨 *Thèmes du menu* (actuel : ${menu.THEMES[theme()]?.nom || 'Classique'})\n` +
-          Object.entries(menu.THEMES).map(([k, v]) => `• ${config.PREFIXE}theme ${k} — ${v.nom}`).join('\n')
+        `🎨 *Thèmes du menu* (${cles.length})\n` +
+          cles.map((k, i) => `${k === actuel ? '✅' : '▫️'} ${i + 1}. ${menu.THEMES[k].nom} — ${config.PREFIXE}theme ${k}`).join('\n') +
+          `\n\n💡 ${config.PREFIXE}theme <nom ou numéro>`
       );
     },
   },
