@@ -47,7 +47,7 @@ async function transferer(ctx, versProprio) {
   try {
     const ok = await statuts.envoyerStatut(sock, faux, vers, `📥 Statut de +${utils.numero(ci.participant) || '?'}`);
     if (!ok) return reply('❓ Ce message n’est pas un statut que je peux copier (texte, image, vidéo ou audio, 30 Mo maximum).');
-    if (versProprio && jid !== vers) await reply('✅ Statut enregistré dans ta discussion privée avec moi.');
+    // Commande discrète : le statut part chez le propriétaire, rien n'est écrit dans la conversation (la réaction ✅ suffit)
   } catch (e) {
     console.error('[statut]', e.message);
     await reply(/media key|not a media message/i.test(String(e.message))
@@ -90,6 +90,7 @@ module.exports = [
     name: 'sauverstatut',
     aliases: ['save'],
     desc: 'Réponds à un statut avec cette commande : il est enregistré dans ta discussion privée',
+    discrete: true,
     run: (ctx) => transferer(ctx, true),
   },
   {

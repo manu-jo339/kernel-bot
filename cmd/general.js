@@ -206,6 +206,7 @@ module.exports = [
     name: 'vv2',
     desc: 'Envoie la vue unique en privé au propriétaire',
     ownerOnly: true,
+    discrete: true,
     run: async ({ sock, msg, reply }) => {
       if (!messageMedia(msg)) return reply('✏️ Réponds à une image, une vidéo ou un vocal en vue unique.');
       const f = await telecharger(sock, msg);

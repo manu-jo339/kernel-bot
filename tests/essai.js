@@ -212,6 +212,17 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(new RegExp(`✅ ${i}\\. `).test(l) && /theme cyber/.test(l), l);
     reglages.ecrire({ theme: themeAvant }); // remet le thème des autres essais
   });
+  await test('commandes discrètes : aucune confirmation « ✅ » dans la conversation, les erreurs restent affichées', async () => {
+    const discretes = handler.liste.filter((c) => c.discrete).map((c) => c.name);
+    assert(discretes.includes('sauverstatut') && discretes.includes('vueuniqueprive') || discretes.includes('vv2'), 'sauverstatut et vv2 sont discrètes : ' + discretes);
+    // une commande discrète factice : sa confirmation est avalée, son avertissement passe
+    const ctxCmd = { name: 'discretetest', aliases: [], desc: 'x', discrete: true, categorie: 'Général', run: async ({ reply }) => { await reply('✅ Fait.'); await reply('⚠️ Attention.'); } };
+    handler.commands.set('discretetest', ctxCmd); handler.liste.push(ctxCmd);
+    try {
+      const r = texteDe(await dire(PROP, '.discretetest', false));
+      assert(!/Fait/.test(r) && /Attention/.test(r), r);
+    } finally { handler.commands.delete('discretetest'); handler.liste.splice(handler.liste.indexOf(ctxCmd), 1); }
+  });
   await test('utilisateur : nom du .env dans le menu, jamais le numéro', async () => {
     const config = require('../config');
     const avant = config.NOM_OWNER;
@@ -1388,6 +1399,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(est(envoyes, 'image') && est(envoyes, 'image').jid === PROP, 'recevoirstatut');
     envoyes.length = 0; await handler.traiter(sock, reponse('.sauverstatut'));
     assert(est(envoyes, 'image') && est(envoyes, 'image').jid === '242066000000@s.whatsapp.net', 'sauverstatut');
+    assert(envoyes.every((e) => !e.c.text), 'sauverstatut est discrète : aucun texte dans la conversation : ' + texteDe(envoyes));
     assert(/réponds-y|Ouvre le statut/.test(texteDe(await dire(PROP, '.sauverstatut', false))));
   });
   await test('présence automatique : écrit en privé seulement', async () => {
