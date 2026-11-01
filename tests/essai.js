@@ -492,7 +492,7 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     await handler.traiter(sock, citation('INCONNU', '.vueunique'));
     assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
   });
-  await test('vue unique gardée à son arrivée : vv et vv2 marchent encore après l’ouverture (WhatsApp l’a effacée) ; limites de mémoire ; jamais mes propres envois ni les statuts ; VUES_UNIQUES_GARDER=non', async () => {
+  await test('vue unique gardée à son arrivée : vv et vv2 marchent encore après l’ouverture (WhatsApp l’a effacée) ; mes propres envois aussi ; limites de mémoire ; jamais les statuts ; VUES_UNIQUES_GARDER=non', async () => {
     const octets = require('../lib/octets'), cache = require('../lib/cache');
     octets.vider();
     const photo = Buffer.from('photo-gardee-a-l-arrivee');
@@ -524,14 +524,24 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       cache.ajouter(vue('ARR-INCONNUE'));
       await handler.traiter(sock, citation('ARR-INCONNUE', '.vv'));
       assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
-      // 5. ce qui n'est PAS gardé : mes propres envois, les statuts, les messages ordinaires, les vues déclarées trop grosses
+      // 5. ce qui n'est PAS gardé : les statuts, les messages ordinaires, les vues déclarées trop grosses
       ouverte = false; appels = 0;
-      assert.strictEqual(await octets.capturer(sock, { ...vue('MOI1'), key: { ...vue('MOI1').key, fromMe: true } }), false, 'pas mes propres envois');
       assert.strictEqual(await octets.capturer(sock, { key: { remoteJid: 'status@broadcast', id: 'ST1', participant: MEMBRE }, message: { imageMessage: { mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } }), false, 'pas les statuts');
       assert.strictEqual(await octets.capturer(sock, { key: { remoteJid: PROP, id: 'ORD1' }, message: { conversation: 'bonjour' } }), false, 'pas un message ordinaire');
       assert.strictEqual(await octets.capturer(sock, { key: { remoteJid: PROP, id: 'ORD2', fromMe: false }, message: { imageMessage: { mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } }), false, 'pas une image ordinaire');
       assert.strictEqual(await octets.capturer(sock, vue('GROS1', { fileLength: octets.MAX_PAR_ELEMENT + 1 })), false, 'trop grosse : refusée sans téléchargement');
       assert.strictEqual(appels, 0, 'aucun téléchargement inutile');
+      // 5 bis. une vue unique envoyée PAR MOI depuis mon téléphone arrive au bot comme « fromMe » : elle est gardée aussi
+      octets.vider(); ouverte = false;
+      const moi1 = vue('MOI1'); moi1.key.fromMe = true; moi1.key.participant = undefined;
+      cache.ajouter(moi1);
+      assert.strictEqual(await octets.capturer(sock, moi1), true, 'mes propres envois sont gardés');
+      ouverte = true;
+      envoyes.length = 0;
+      await handler.traiter(sock, citation('MOI1', '.vv2'));
+      const mienne = envoyes.find((e) => e.c && e.c.image);
+      assert(mienne && Buffer.compare(mienne.c.image, photo) === 0, 'vv2 sur ma propre vue unique, après ouverture : ' + JSON.stringify(envoyes.map((e) => e.c)));
+      appels = 0; ouverte = false;
       // 6. deux messages reçus en même temps pour le même identifiant : un seul téléchargement
       octets.vider(); appels = 0;
       const double = vue('DBL1');
@@ -565,6 +575,24 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     octets.garder(sock, 'V1', { buffer: Buffer.from('x'), type: 'image' }, il_y_a);
     assert(!octets.lire(sock, 'V1'), 'plus de 12 h : perdue');
     octets.vider();
+  });
+  await test('vv / vv2 lancés dans un groupe : erreurs et explications arrivent en PRIVÉ chez le propriétaire, rien dans le groupe', async () => {
+    const cache = require('../lib/cache');
+    const dansGroupe = (id, texte) => ({ key: { remoteJid: GRP, participant: PROP, id: 'G' + ++n }, message: { extendedTextMessage: { text: texte, contextInfo: { stanzaId: id, participant: MEMBRE, quotedMessage: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg' } } } } } } }, pushName: 'Moi', messageTimestamp: 1 });
+    const prive = require('../lib/statuts').jidProprietaire(sock);
+    for (const nom of ['.vv', '.vv2']) {
+      // vue unique jamais reçue : avertissement
+      envoyes.length = 0;
+      await handler.traiter(sock, dansGroupe('INCONNUE-' + nom, nom));
+      const textes = envoyes.filter((e) => e.c && e.c.text);
+      assert(textes.length >= 1 && textes.every((e) => e.jid === prive), nom + ' : avertissement en privé : ' + JSON.stringify(envoyes.map((e) => [e.jid, e.c.text])));
+      assert(/plus accès à ce média/.test(texteDe(envoyes)), nom + ' : message clair');
+      assert(!envoyes.some((e) => e.jid === GRP), nom + ' : rien dans le groupe');
+      // pas de média cité : explication aussi en privé
+      envoyes.length = 0;
+      await handler.traiter(sock, { key: { remoteJid: GRP, participant: PROP, id: 'G' + ++n }, message: { conversation: nom }, pushName: 'Moi', messageTimestamp: 1 });
+      assert(envoyes.length >= 1 && envoyes.every((e) => e.jid === prive), nom + ' : explication en privé : ' + JSON.stringify(envoyes.map((e) => e.jid)));
+    }
   });
   await test('sticker lié à vv2 : la cible est la vue unique citée (pas le sticker), le média part chez le propriétaire, AUCUNE réponse dans la conversation', async () => {
     const utils = require('../lib/utils'), cache = require('../lib/cache');

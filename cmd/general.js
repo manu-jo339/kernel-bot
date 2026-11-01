@@ -190,6 +190,7 @@ module.exports = [
     name: 'vv',
     desc: 'Récupère une photo/vidéo « vue unique » (réponds au message)',
     ownerOnly: true,
+    avisPrive: true, // les erreurs et explications arrivent en privé chez le propriétaire, jamais dans la conversation
     run: async ({ sock, jid, msg, reply }) => {
       const cible = messageMedia(msg);
       if (!cible) return reply('✏️ Réponds à une image, une vidéo ou un vocal en vue unique.');
@@ -207,6 +208,7 @@ module.exports = [
     desc: 'Envoie la vue unique en privé au propriétaire',
     ownerOnly: true,
     discrete: true,
+    avisPrive: true,
     run: async ({ sock, msg, reply }) => {
       if (!messageMedia(msg)) return reply('✏️ Réponds à une image, une vidéo ou un vocal en vue unique.');
       const f = await telecharger(sock, msg);
