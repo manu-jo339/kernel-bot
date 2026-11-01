@@ -492,6 +492,80 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     await handler.traiter(sock, citation('INCONNU', '.vueunique'));
     assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
   });
+  await test('vue unique gardée à son arrivée : vv et vv2 marchent encore après l’ouverture (WhatsApp l’a effacée) ; limites de mémoire ; jamais mes propres envois ni les statuts ; VUES_UNIQUES_GARDER=non', async () => {
+    const octets = require('../lib/octets'), cache = require('../lib/cache');
+    octets.vider();
+    const photo = Buffer.from('photo-gardee-a-l-arrivee');
+    const vue = (id, extra = {}) => ({ key: { remoteJid: PROP, id, participant: MEMBRE, fromMe: false }, message: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123'), ...extra } } } }, messageTimestamp: 1 });
+    const citation = (id, texte) => ({ key: { remoteJid: PROP, id: 'Q' + ++n }, message: { extendedTextMessage: { text: texte, contextInfo: { stanzaId: id, participant: MEMBRE, quotedMessage: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg' } } } } } } }, pushName: 'Moi', messageTimestamp: 1 });
+    const entree = require.cache[require.resolve('@whiskeysockets/baileys')], exportsAvant = entree.exports;
+    let ouverte = false, appels = 0;
+    entree.exports = new Proxy(exportsAvant, { get: (c, k) => (k === 'downloadMediaMessage' ? async () => { appels++; if (ouverte) throw new Error('Media key not found'); return photo; } : c[k]) });
+    try {
+      // 1. arrivée : téléchargée tout de suite ; puis la personne l'ouvre → le serveur ne la renvoie plus
+      const arrivee = vue('ARR1');
+      cache.ajouter(arrivee);
+      assert.strictEqual(await octets.capturer(sock, arrivee), true, 'gardée à l’arrivée');
+      assert.strictEqual(octets.taille(), 1);
+      ouverte = true;
+      // 2. vv2 (privé, discret) après ouverture
+      envoyes.length = 0;
+      await handler.traiter(sock, citation('ARR1', '.vv2'));
+      const prive = envoyes.find((e) => e.c && e.c.image);
+      assert(prive && Buffer.compare(prive.c.image, photo) === 0, 'vv2 après ouverture : ' + JSON.stringify(envoyes.map((e) => e.c)));
+      assert.strictEqual(prive.jid, require('../lib/statuts').jidProprietaire(sock));
+      // 3. vv (dans la conversation) après ouverture
+      envoyes.length = 0;
+      await handler.traiter(sock, citation('ARR1', '.vv'));
+      const ici = envoyes.find((e) => e.c && e.c.image);
+      assert(ici && Buffer.compare(ici.c.image, photo) === 0 && !/plus accès/.test(texteDe(envoyes)), 'vv après ouverture : ' + JSON.stringify(envoyes.map((e) => e.c)));
+      // 4. une vue unique jamais reçue pendant que le bot fonctionnait : message clair (pas de copie)
+      envoyes.length = 0;
+      cache.ajouter(vue('ARR-INCONNUE'));
+      await handler.traiter(sock, citation('ARR-INCONNUE', '.vv'));
+      assert(/plus accès à ce média/.test(texteDe(envoyes)), texteDe(envoyes) || 'aucune réponse');
+      // 5. ce qui n'est PAS gardé : mes propres envois, les statuts, les messages ordinaires, les vues déclarées trop grosses
+      ouverte = false; appels = 0;
+      assert.strictEqual(await octets.capturer(sock, { ...vue('MOI1'), key: { ...vue('MOI1').key, fromMe: true } }), false, 'pas mes propres envois');
+      assert.strictEqual(await octets.capturer(sock, { key: { remoteJid: 'status@broadcast', id: 'ST1', participant: MEMBRE }, message: { imageMessage: { mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } }), false, 'pas les statuts');
+      assert.strictEqual(await octets.capturer(sock, { key: { remoteJid: PROP, id: 'ORD1' }, message: { conversation: 'bonjour' } }), false, 'pas un message ordinaire');
+      assert.strictEqual(await octets.capturer(sock, { key: { remoteJid: PROP, id: 'ORD2', fromMe: false }, message: { imageMessage: { mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } }), false, 'pas une image ordinaire');
+      assert.strictEqual(await octets.capturer(sock, vue('GROS1', { fileLength: octets.MAX_PAR_ELEMENT + 1 })), false, 'trop grosse : refusée sans téléchargement');
+      assert.strictEqual(appels, 0, 'aucun téléchargement inutile');
+      // 6. deux messages reçus en même temps pour le même identifiant : un seul téléchargement
+      octets.vider(); appels = 0;
+      const double = vue('DBL1');
+      await Promise.all([octets.capturer(sock, double), octets.capturer(sock, double)]);
+      assert.strictEqual(appels, 1, 'un seul téléchargement');
+      // 7. chaque numéro ne voit que ses copies
+      const autre = Object.assign(Object.create(sock), { secondaire: true, user: { id: '242077000000:2@s.whatsapp.net' } });
+      assert(octets.lire(sock, 'DBL1') && !octets.lire(autre, 'DBL1'), 'séparé par numéro');
+      // 8. échec du téléchargement (déjà ouverte à l'arrivée) : rien n'est gardé, aucune erreur
+      octets.vider(); ouverte = true;
+      assert.strictEqual(await octets.capturer(sock, vue('DEJA1')), false);
+      assert.strictEqual(octets.taille(), 0);
+      // 9. réglage
+      ouverte = false;
+      process.env.VUES_UNIQUES_GARDER = 'non';
+      assert.strictEqual(await octets.capturer(sock, vue('OFF1')), false, 'désactivé');
+      delete process.env.VUES_UNIQUES_GARDER;
+    } finally { entree.exports = exportsAvant; delete process.env.VUES_UNIQUES_GARDER; }
+    // 10. limites : 15 éléments, 40 Mo, 16 Mo par élément, 12 h
+    octets.vider();
+    for (let i = 0; i < 20; i++) octets.garder(sock, 'L' + i, { buffer: Buffer.from('x'), type: 'image' });
+    assert.strictEqual(octets.taille(), octets.MAX_ELEMENTS);
+    assert(!octets.lire(sock, 'L0') && octets.lire(sock, 'L19'), 'les plus anciens partent d’abord');
+    octets.vider();
+    const mo = 1024 * 1024;
+    assert.strictEqual(octets.garder(sock, 'G0', { buffer: Buffer.alloc(17 * mo), type: 'video' }), false, 'plus de 16 Mo : refusé');
+    for (const id of ['G1', 'G2', 'G3']) octets.garder(sock, id, { buffer: Buffer.alloc(15 * mo), type: 'video' });
+    assert(octets.octets() <= octets.MAX_OCTETS && octets.taille() === 2 && !octets.lire(sock, 'G1') && octets.lire(sock, 'G3'), 'plafond de 40 Mo');
+    octets.vider();
+    const il_y_a = Date.now() - octets.DUREE - 1000;
+    octets.garder(sock, 'V1', { buffer: Buffer.from('x'), type: 'image' }, il_y_a);
+    assert(!octets.lire(sock, 'V1'), 'plus de 12 h : perdue');
+    octets.vider();
+  });
   await test('sticker lié à vv2 : la cible est la vue unique citée (pas le sticker), le média part chez le propriétaire, AUCUNE réponse dans la conversation', async () => {
     const utils = require('../lib/utils'), cache = require('../lib/cache');
     const origine = { key: { remoteJid: PROP, id: 'ORIG-VV2', participant: MEMBRE }, message: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', mediaKey: Buffer.from('cle-de-test-0123456789abcdef0123') } } } } };
