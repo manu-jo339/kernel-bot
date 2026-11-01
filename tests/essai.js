@@ -40,7 +40,7 @@ const msg = (de, texte, groupe = true, extra = {}) => ({
   message: { conversation: texte, ...extra }, pushName: 'Test', messageTimestamp: 1,
 });
 const dire = async (de, texte, groupe = true) => { envoyes.length = 0; await handler.traiter(sock, msg(de, texte, groupe)); return envoyes.slice(); };
-const texteDe = (r) => r.map((x) => x.c.text || '').join('\n');
+const texteDe = (r) => r.map((x) => x.c.text || x.c.caption || '').join('\n');
 let ok = 0;
 const echecs = [];
 const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', nom); } catch (e) { console.error('  ✘', nom, '\n   ', e.message); echecs.push(`${nom} -> ${String(e.message).split('\n')[0].slice(0, 200)}`); process.exitCode = 1; } };
@@ -176,9 +176,13 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     const g = texteDe(await dire(MEMBRE, '.menu protection'));
     assert(/antilien/.test(g), g);
   });
-  await test('image : info, uptime, système, maj oui ; ping, toutmenu, aide non ; images en boucle', async () => {
+  await test('image : info, uptime, système, ping, maj oui ; toutmenu, aide non ; images en boucle', async () => {
     const aImage = (rep) => rep.some((x) => x.c.image);
-    assert(!aImage(await dire(MEMBRE, '.ping')), 'ping sans image');
+    const rp = await dire(MEMBRE, '.ping');
+    assert(aImage(rp), 'ping : image du thème');
+    const cp = rp.find((x) => x.c.image).c.caption.normalize('NFKD');
+    assert(/Pong/i.test(cp) && /Latence : \d+ ms/i.test(cp) && /Vitesse : [▰▱]{5}/i.test(cp) && /En marche/i.test(cp) && /M.{1,2}MOIRE : \d+ Mo/i.test(cp), cp);
+    assert(rp.some((x) => x.c.react?.text === '🏓'), 'réaction 🏓');
     assert(!aImage(await dire(MEMBRE, '.toutmenu')), 'toutmenu sans image');
     assert(!aImage(await dire(MEMBRE, '.aide ping')), 'aide sans image');
     assert(aImage(await dire(MEMBRE, '.info')) && aImage(await dire(MEMBRE, '.enmarche')) && aImage(await dire(PROP, '.etatsysteme')), 'info/uptime/système avec image');
@@ -370,6 +374,22 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     r = await dire(ADMIN, 'voici https://exemple.com/x');
     assert(!r.some((x) => x.c.delete), 'admin supprimé');
   });
+  await test('sanction « supprimer » : le message est supprimé ET le bot dit pourquoi (une seule fois par personne en 30 s, jamais pour un admin)', async () => {
+    await dire(ADMIN, '.antilien supprimer');
+    const AUTRE = '242064444455@s.whatsapp.net'; // un membre qui n'a encore reçu aucun avis
+    // 1er lien : suppression + explication avec mention
+    let r = await dire(AUTRE, 'regardez https://exemple.org/un');
+    assert(r.some((x) => x.c.delete), 'message supprimé');
+    const avis = r.find((x) => x.c.text && /ne sont pas autorisés ici/.test(x.c.text));
+    assert(avis && avis.c.text.includes('@242064444455') && avis.c.mentions.includes(AUTRE), 'avis avec mention : ' + JSON.stringify(r.map((x) => x.c.text)));
+    assert.strictEqual(avis.jid, GRP, 'l’avis est dans le groupe');
+    // 2e lien tout de suite : supprimé aussi, mais pas de deuxième avis (le groupe ne doit pas être inondé)
+    r = await dire(AUTRE, 'et encore https://exemple.org/deux');
+    assert(r.some((x) => x.c.delete) && !r.some((x) => x.c.text && /ne sont pas autorisés/.test(x.c.text)), 'pas de deuxième avis : ' + JSON.stringify(r.map((x) => x.c.text)));
+    // un admin n'est jamais sanctionné ni prévenu
+    r = await dire(ADMIN, 'voici https://exemple.org/trois');
+    assert(!r.some((x) => x.c.delete || x.c.text), 'admin épargné');
+  });
   await test('antilien : avertir puis exclusion à 3', async () => {
     await dire(ADMIN, '.antilien avertir');
     await dire(MEMBRE, 'http://a.com'); await dire(MEMBRE, 'http://a.com');
@@ -402,6 +422,167 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'add', author: ADMIN });
     assert(/Salut @242063333333 dans Test/.test(texteDe(envoyes)), texteDe(envoyes));
     assert(/Salut/.test(texteDe(await dire(ADMIN, '.bienvenue test'))));
+  });
+  await test('bienvenue : carte avec la photo du nouveau membre, cadre du thème, description du groupe', async () => {
+    const sharp = require('sharp');
+    const reglagesM = require('../lib/reglages'), groupes = require('../lib/groupes');
+    const photo = await sharp({ create: { width: 300, height: 300, channels: 3, background: '#dd3333' } }).jpeg().toBuffer();
+    const centre = async (img) => { const { data } = await sharp(img).extract({ left: 520, top: 480, width: 4, height: 4 }).raw().toBuffer({ resolveWithObject: true }); return [data[0], data[1], data[2]]; };
+    const N = (t) => String(t).normalize('NFKD'); // les thèmes écrivent en lettres « mathématiques »
+    const vraiFetch = global.fetch;
+    const anciennesMeta = sock.groupMetadata;
+    try {
+      global.fetch = async (u) => (String(u).includes('pp.test') ? { ok: true, arrayBuffer: async () => photo.buffer.slice(photo.byteOffset, photo.byteOffset + photo.length) } : vraiFetch(u));
+      sock.groupMetadata = async () => ({ id: GRP, subject: 'Test', desc: 'Groupe des tests.\nRespect et entraide.', participants: [{ id: BOT, admin: 'admin' }, { id: ADMIN, admin: 'admin' }, { id: MEMBRE }, { id: PROP }] });
+      groupes.invalider(GRP);
+      await dire(ADMIN, '.bienvenue message'); await dire(ADMIN, '.bienvenue defaut'); await dire(ADMIN, '.bienvenue on');
+      // avec photo de profil
+      sock.profilePictureUrl = async () => 'http://pp.test/a.jpg';
+      envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'add', author: ADMIN });
+      const m = envoyes.find((x) => x.c.image);
+      assert(m && Buffer.isBuffer(m.c.image), 'pas de carte image');
+      const meta = await sharp(m.c.image).metadata();
+      assert(meta.width === 1080 && meta.height === 1080, 'taille ' + meta.width);
+      assert(/BIENVENUE/i.test(N(m.c.caption)) && /Respect et entraide/.test(m.c.caption) && m.c.caption.includes('@242063333333'), m.c.caption);
+      assert(m.c.caption.length <= 1000);
+      assert(m.c.mentions.includes(MEMBRE));
+      // la photo est bien dans la carte (le centre est rouge)
+      const px = await centre(m.c.image);
+      assert(px[0] > 190 && px[1] < 90 && px[2] < 90, 'photo absente de la carte : ' + px);
+      // sans photo : portrait du thème (pas rouge)
+      sock.profilePictureUrl = async () => { throw new Error('item-not-found'); };
+      envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'add', author: ADMIN });
+      const m2 = envoyes.find((x) => x.c.image);
+      assert(m2, 'pas de carte sans photo');
+      const px2 = await centre(m2.c.image);
+      assert(!(px2[0] > 190 && px2[1] < 90 && px2[2] < 90), 'portrait attendu : ' + px2);
+      // chaque thème donne son propre cadre
+      for (const th of Object.keys(require('../lib/menu').THEMES)) {
+        reglagesM.ecrire({ theme: th });
+        envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'add', author: ADMIN });
+        const cap = envoyes.find((x) => x.c.image)?.c.caption || '';
+        assert(/Bienvenue/i.test(N(cap)) && /Test/.test(cap) && /Respect/.test(cap), `thème ${th} : ${cap.slice(0, 80)}`);
+      }
+      reglagesM.ecrire({ theme: 'kernel' });
+      // message personnalisé : sa légende sur la carte, {description} reconnue
+      await dire(ADMIN, '.bienvenue message Salut {nom} — {description}');
+      envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'add', author: ADMIN });
+      assert(/Salut @242063333333 — Groupe des tests/.test(envoyes.find((x) => x.c.image)?.c.caption || ''), 'légende perso');
+      await dire(ADMIN, '.bienvenue defaut');
+      // photo off : texte seul
+      await dire(ADMIN, '.bienvenue photo off');
+      envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'add', author: ADMIN });
+      assert(!envoyes.some((x) => x.c.image) && /BIENVENUE/i.test(N(texteDe(envoyes))), 'texte seul attendu');
+      await dire(ADMIN, '.bienvenue photo on');
+      // test : la carte est montrée à celui qui tape la commande
+      envoyes.length = 0; await dire(ADMIN, '.bienvenue test');
+      assert(envoyes.some((x) => x.c.image), 'test sans carte');
+      // ajout en masse : un seul message texte, pas de rafale d'images
+      envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: ['242060000001@s.whatsapp.net', '242060000002@s.whatsapp.net', '242060000003@s.whatsapp.net', '242060000004@s.whatsapp.net'], action: 'add', author: ADMIN });
+      assert(envoyes.length === 1 && !envoyes[0].c.image && envoyes[0].c.mentions.length === 4, 'ajout en masse');
+      // description très longue : la légende reste sous la limite
+      sock.groupMetadata = async () => ({ id: GRP, subject: 'Test', desc: ('Une très longue ligne de description. ').repeat(80) + '\n' + 'Autre ligne '.repeat(60), participants: [{ id: BOT, admin: 'admin' }, { id: MEMBRE }] });
+      groupes.invalider(GRP);
+      envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'add', author: ADMIN });
+      const long = envoyes.find((x) => x.c.image)?.c.caption || '';
+      assert(long.length > 100 && long.length <= 1000, 'longueur ' + long.length);
+    } finally {
+      global.fetch = vraiFetch; delete sock.profilePictureUrl; sock.groupMetadata = anciennesMeta; groupes.invalider(GRP);
+      await dire(ADMIN, '.bienvenue photo on'); await dire(ADMIN, '.bienvenue message'); require('../lib/reglages').ecrire({ theme: 'kernel' });
+    }
+  });
+  await test('au revoir : carte « AU REVOIR » (portrait si pas de photo), texte seul avec « photo off », message perso gardé', async () => {
+    const sharp = require('sharp');
+    const N = (t) => String(t).normalize('NFKD');
+    await dire(ADMIN, '.aurevoir on'); await dire(ADMIN, '.aurevoir defaut');
+    envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'remove', author: MEMBRE });
+    const m = envoyes.find((x) => x.c.image);
+    assert(m && /Au revoir/i.test(N(m.c.caption)) && /@242063333333/.test(m.c.caption) && /bient/i.test(m.c.caption), m?.c.caption);
+    assert((await sharp(m.c.image).metadata()).width === 1080);
+    assert(!/Description/i.test(N(m.c.caption)), 'pas de description au départ');
+    await dire(ADMIN, '.aurevoir photo off');
+    envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'remove', author: MEMBRE });
+    assert(!envoyes.some((x) => x.c.image) && /Au revoir/i.test(N(texteDe(envoyes))));
+    await dire(ADMIN, '.aurevoir message Adieu {nom} de {groupe}');
+    envoyes.length = 0; await evenements.surParticipants(sock, { id: GRP, participants: [MEMBRE], action: 'remove', author: MEMBRE });
+    assert(/Adieu @242063333333 de Test/.test(texteDe(envoyes)), texteDe(envoyes));
+    await dire(ADMIN, '.aurevoir message'); await dire(ADMIN, '.aurevoir defaut'); await dire(ADMIN, '.aurevoir photo on'); await dire(ADMIN, '.aurevoir off');
+  });
+  await test('chatbot : répond aux autres ; tes propres messages ne comptent que dans « Moi-même » (si activé), jamais dans la discussion d’un autre', async () => {
+    const ia = require('../lib/ia'), db = require('../lib/db'), chatbot = require('../lib/chatbot');
+    const iaAvant = { repondre: ia.repondre, apercu: ia.apercu }, delaiAvant = process.env.IA_DELAI_MINI_MS;
+    let questions = 0;
+    ia.repondre = async () => { questions++; return { texte: 'Salut, je suis là !' }; };
+    ia.apercu = () => [{ nom: 'Test', statut: 'ok' }];
+    process.env.IA_DELAI_MINI_MS = '1';
+    const AMI = '242069999001@s.whatsapp.net', MOI = '242061111111@s.whatsapp.net';
+    const ecrire = async (jid, texte, deMoi, expediteur) => {
+      envoyes.length = 0;
+      await handler.traiter(sock, { key: { remoteJid: jid, fromMe: deMoi, id: 'CB' + ++n, participant: undefined }, message: { conversation: texte }, pushName: expediteur || 'Ami', messageTimestamp: 1 });
+      return envoyes.filter((x) => x.c.text);
+    };
+    try {
+      db.marquerInfo('242069999001'); db.marquerInfo('242061111111'); // l'avis de première utilisation est déjà passé
+      db.definirActif('p:242069999001', true); db.definirActif('p:242061111111', false);
+      // l'ami écrit : réponse
+      let r = await ecrire(AMI, 'bonjour le bot', false);
+      assert(r.some((x) => x.jid === AMI && /Salut, je suis là/.test(x.c.text)), 'réponse à l’ami : ' + JSON.stringify(r));
+      // tu écris toi-même dans la discussion de l'ami : aucune réponse
+      questions = 0;
+      assert.strictEqual((await ecrire(AMI, 'bjr', true, 'Moi')).length, 0, 'tes messages chez un autre : rien');
+      // « Moi-même » : rien tant que le chatbot n'y est pas activé…
+      assert.strictEqual((await ecrire(MOI, 'dfg', true, 'Moi')).length, 0, 'Moi-même non activé : rien');
+      assert.strictEqual(questions, 0);
+      // …puis il répond (une seule fois, sans boucle)
+      db.definirActif('p:242061111111', true);
+      r = await ecrire(MOI, 'dfg', true, 'Moi');
+      assert(r.some((x) => x.jid === MOI && /Salut, je suis là/.test(x.c.text)), 'Moi-même activé : réponse');
+      assert.strictEqual(questions, 1);
+      // le texte d'activation explique la différence
+      assert(/ne déclenchent rien/.test(texteDe(await dire(PROP, '.chatbot on', false)) + texteDe(await ecrire(AMI, '.chatbot on', true, 'Moi'))), 'explication dans la discussion d’un autre');
+      assert(/écris-moi simplement/.test(texteDe(await ecrire(MOI, '.chatbot on', true, 'Moi'))), 'texte dans Moi-même');
+    } finally {
+      ia.repondre = iaAvant.repondre; ia.apercu = iaAvant.apercu;
+      if (delaiAvant === undefined) delete process.env.IA_DELAI_MINI_MS; else process.env.IA_DELAI_MINI_MS = delaiAvant;
+      db.definirActif('p:242069999001', false); db.definirActif('p:242061111111', false);
+    }
+  });
+  await test('mention du propriétaire : réponse automatique (identifiant normal ou masqué @lid), une fois par minute, y compris en mode privé (seules les commandes sont réservées)', async () => {
+    const reglagesM = require('../lib/reglages'), groupes = require('../lib/groupes');
+    const anciennesMeta = sock.groupMetadata, modeAvant = config.MODE;
+    const LID = '99887766554433@lid', AUTRE = '55555555555@lid';
+    const G = (k) => `12036300000000010${k}@g.us`;
+    const mentionner = async (g, mentions, de = MEMBRE) => {
+      envoyes.length = 0;
+      await handler.traiter(sock, { key: { remoteJid: g, participant: de, id: 'MN' + ++n }, message: { extendedTextMessage: { text: 'Mce @x', contextInfo: { mentionedJid: mentions } } }, pushName: 'T', messageTimestamp: 1 });
+      return envoyes.filter((x) => x.c.text);
+    };
+    const membres = (g, liste) => { sock.groupMetadata = async () => ({ id: g, subject: 'T', participants: liste }); groupes.invalider(g); };
+    try {
+      config.MODE = 'public';
+      reglagesM.ecrire({ mentionMessage: 'Oui ? Raconte', mentionActif: true });
+      membres(G(1), [{ id: BOT, admin: 'admin' }, { id: MEMBRE }]);
+      assert((await mentionner(G(1), [BOT])).some((x) => /Oui \? Raconte/.test(x.c.text)), 'identifiant classique');
+      assert((await mentionner(G(1), [BOT])).length === 0, 'une seule réponse par minute');
+      membres(G(2), [{ id: LID, phoneNumber: BOT }, { id: MEMBRE }]);
+      assert((await mentionner(G(2), [LID])).some((x) => /Oui \? Raconte/.test(x.c.text)), 'identifiant masqué @lid retrouvé par le groupe');
+      membres(G(3), [{ id: LID, phoneNumber: BOT }, { id: AUTRE, phoneNumber: MEMBRE }]);
+      assert((await mentionner(G(3), [AUTRE])).length === 0, 'mention d’un autre membre : rien');
+      config.MODE = 'private';
+      membres(G(4), [{ id: BOT }, { id: MEMBRE }]);
+      assert((await mentionner(G(4), [BOT])).some((x) => /Oui \? Raconte/.test(x.c.text)), 'mode privé : la réponse automatique part quand même');
+      assert.strictEqual((await dire(MEMBRE, '.ping')).length, 0, 'mode privé : mais aucune commande pour les autres');
+      // répondeur d'absence en privé : lui aussi continue en mode privé
+      reglagesM.ecrire({ absentActif: true, absentMessage: 'Absent pour le moment' });
+      envoyes.length = 0;
+      await handler.traiter(sock, { key: { remoteJid: '242067777001@s.whatsapp.net', id: 'AB' + ++n }, message: { conversation: 'Bonjour, tu es là ?' }, pushName: 'T', messageTimestamp: 1 });
+      assert(envoyes.some((x) => /Absent pour le moment/.test(x.c.text || '')), 'absence en mode privé');
+      reglagesM.ecrire({ absentActif: false, absentMessage: '' });
+      config.MODE = 'public';
+      reglagesM.ecrire({ mentionActif: false });
+      membres(G(5), [{ id: BOT }, { id: MEMBRE }]);
+      assert((await mentionner(G(5), [BOT])).length === 0, 'désactivé : silence');
+    } finally { sock.groupMetadata = anciennesMeta; config.MODE = modeAvant; reglagesM.ecrire({ mentionMessage: '', mentionActif: false }); }
   });
   await test('antipromotion annule une promotion par un tiers', async () => {
     await dire(ADMIN, '.antipromotion on');
@@ -575,6 +756,24 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     octets.garder(sock, 'V1', { buffer: Buffer.from('x'), type: 'image' }, il_y_a);
     assert(!octets.lire(sock, 'V1'), 'plus de 12 h : perdue');
     octets.vider();
+  });
+  await test('protections : activer ou consulter sans que le bot soit administrateur du groupe → avertissement clair ; rien si le bot est admin ; rien pour les simples alertes', async () => {
+    const GRP2 = '120363000000000002@g.us';
+    const sansAdmin = Object.assign(Object.create(sock), { groupMetadata: async () => ({ id: GRP2, subject: 'Sans droits', participants: [{ id: BOT }, { id: ADMIN, admin: 'admin' }, { id: MEMBRE }] }) });
+    const lancer = async (s, groupe, texte) => { envoyes.length = 0; await handler.traiter(s, { key: { remoteJid: groupe, participant: ADMIN, id: 'P' + ++n }, message: { conversation: texte }, pushName: 'Admin', messageTimestamp: 1 }); return texteDe(envoyes); };
+    let r = await lancer(sansAdmin, GRP2, '.antibot on');
+    assert(/antibot.*activé/.test(r) && /pas administrateur de ce groupe/.test(r), 'activation : ' + r);
+    r = await lancer(sansAdmin, GRP2, '.antibot supprimer');
+    assert(/pas administrateur de ce groupe/.test(r), 'choix de la sanction : ' + r);
+    r = await lancer(sansAdmin, GRP2, '.antibot');
+    assert(/pas administrateur de ce groupe/.test(r), 'consultation : ' + r);
+    r = await lancer(sansAdmin, GRP2, '.antibot off');
+    assert(/désactivé/.test(r) && !/pas administrateur/.test(r), 'désactiver ne gêne pas : ' + r);
+    r = await lancer(sansAdmin, GRP2, '.promotealert on');
+    assert(/activé/.test(r) && !/pas administrateur/.test(r), 'une simple alerte n’a pas besoin des droits : ' + r);
+    r = await lancer(sock, GRP, '.antibot on');
+    assert(/antibot.*activé/.test(r) && !/pas administrateur/.test(r), 'bot administrateur : aucun avertissement : ' + r);
+    await lancer(sock, GRP, '.antibot off');
   });
   await test('vv / vv2 lancés dans un groupe : erreurs et explications arrivent en PRIVÉ chez le propriétaire, rien dans le groupe', async () => {
     const cache = require('../lib/cache');
@@ -1029,6 +1228,31 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     assert(/Aucune diffusion/.test(texteDe(await dire(PROP, '.diffusion oui', false))));
     assert(!/Aperçu/.test(texteDe(await dire(MEMBRE, '.diffusion test test'))));
   });
+  await test('diffusion : groupes réservés aux admins ignorés et signalés ; refus de WhatsApp comptés au lieu d’un faux « terminé »', async () => {
+    const GF = '120363000000000777@g.us', GR = '120363000000000888@g.us';
+    const anciens = { fetch: sock.groupFetchAllParticipating, envoi: sock.sendMessage, ev: sock.ev };
+    const ecouteurs = new Set();
+    sock.ev = { on: (e, f) => e === 'messages.update' && ecouteurs.add(f), off: (e, f) => ecouteurs.delete(f) };
+    sock.groupFetchAllParticipating = async () => ({
+      [GRP]: { id: GRP, subject: 'Ouvert', participants: [{ id: BOT, admin: 'admin' }] },
+      [GF]: { id: GF, subject: 'Annonces fermées', announce: true, participants: [{ id: BOT }, { id: ADMIN, admin: 'admin' }] },
+      [GR]: { id: GR, subject: 'Groupe refusé', participants: [{ id: BOT }] },
+    });
+    sock.sendMessage = async (jid, c, o) => {
+      const r = await anciens.envoi(jid, c, o);
+      if (jid === GR && c.text) setTimeout(() => ecouteurs.forEach((f) => f([{ key: { id: r.key.id, remoteJid: jid, fromMe: true }, update: { status: 0, messageStubParameters: ['479'] } }])), 0);
+      return r;
+    };
+    try {
+      await dire(PROP, '.diffusion Bonjour à tous', false);
+      const r = await dire(PROP, '.diffusion oui', false);
+      const fin = texteDe(r.filter((x) => /Diffusion terminée/.test(x.c.text || '')));
+      assert(/1 envoyé\(s\) sur 2/.test(fin) && /1 refusé/.test(fin) && /Groupe refusé/.test(fin) && /réservé\(s\) aux admins/.test(fin) && /Annonces fermées/.test(fin), fin);
+      assert(r.some((x) => x.jid === GRP && /Bonjour à tous/.test(x.c.text)), 'le groupe ouvert reçoit');
+      assert(!r.some((x) => x.jid === GF && /Bonjour à tous/.test(x.c.text)), 'le groupe fermé est ignoré');
+      assert(ecouteurs.size === 0, 'écouteur retiré à la fin');
+    } finally { sock.groupFetchAllParticipating = anciens.fetch; sock.sendMessage = anciens.envoi; sock.ev = anciens.ev; if (!anciens.ev) delete sock.ev; }
+  });
   await test('rapport et rapport automatique', async () => {
     assert(/Rapport d’activité/.test(texteDe(await dire(PROP, '.rapport'))));
     await dire(PROP, '.rapport auto on');
@@ -1449,6 +1673,20 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     route(/image\.pollinations\.ai/, () => rBuf(png, 'image/png'));
     assert(/Image générée par IA/.test(est(await dire(MEMBRE, '.imageia un lion rouge'), 'image').c.caption));
     assert(/20 secondes|quelques secondes/.test(texteDe(await dire(MEMBRE, '.imageia un chat'))));
+    // service d'images chargé (402) puis rétabli : une nouvelle tentative réussit ; refus persistant : motif précis, jamais le vague « impossible »
+    let appelsImg = 0;
+    route(/image\.pollinations\.ai/, () => (++appelsImg === 1 ? rJson({}, 402) : rBuf(png, 'image/png')));
+    process.env.KERNEL_TEST = '1';
+    const rr = await dire(PROP, '.imageia un éléphant bleu', false);
+    assert(rr.some((x) => /nouvel essai/.test(x.c.text || '')) && est(rr, 'image'), 'une nouvelle tentative envoie l’image : ' + texteDe(rr));
+    route(/image\.pollinations\.ai/, () => rJson({}, 429));
+    const rl = texteDe(await dire(PROP, '.imageia un éléphant vert', false));
+    assert(/limite/.test(rl) && /45 secondes/.test(rl), rl);
+    route(/image\.pollinations\.ai/, () => rJson({}, 503));
+    assert(/panne ou surchargé/.test(texteDe(await dire(PROP, '.imageia un éléphant rouge', false))));
+    route(/image\.pollinations\.ai/, () => rJson({}, 400));
+    assert(/HTTP 400/.test(texteDe(await dire(PROP, '.imageia un éléphant jaune', false))));
+    route(/image\.pollinations\.ai/, () => rBuf(png, 'image/png'));
     route(/translate\.google\.com\/translate_tts/, () => rBuf(fs.readFileSync(tmpf('a.mp3')), 'audio/mpeg'));
     const vx = est(await dire(MEMBRE, '.voix Bonjour tout le monde. Comment ça va ?'), 'audio');
     assert(vx && vx.c.ptt && /opus/.test(vx.c.mimetype) && vx.c.audio.length > 500);
@@ -1647,6 +1885,15 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     await dire(PROP, '.supprimerreglage MAJ_URL', false);
     assert(require('../cmd/systeme').plusRecent('1.10.0', '1.9.9') && !require('../cmd/systeme').plusRecent('1.0.0', '1.0.0'));
     routes.length = 0;
+  });
+  await test('numéro de version : 1.0.7 ; la montée ajoute 1 au dernier chiffre, avec retenue à 10 (1.0.9 → 1.1.0)', async () => {
+    const { suivante } = require('../scripts/monter-version');
+    const v = require('../package.json').version;
+    assert(/^\d+\.\d\.\d$/.test(v), 'version de la forme x.y.z : ' + v);
+    for (const [de, vers] of [['1.0.7', '1.0.8'], ['1.0.8', '1.0.9'], ['1.0.9', '1.1.0'], ['1.1.9', '1.2.0'], ['1.9.9', '2.0.0']]) assert.strictEqual(suivante(de), vers, `${de} → ${vers}`);
+    assert.throws(() => suivante('abc'), /illisible/);
+    assert(require('../cmd/systeme').plusRecent('1.1.0', '1.0.9') && require('../cmd/systeme').plusRecent('2.0.0', '1.9.9'), 'les versions montent bien dans la comparaison de .verifiermaj');
+    assert(new RegExp('Version : ' + v.replace(/\./g, '\\.'), 'i').test(require('../lib/menu').accueil('kernel', handler.liste, 'Test').normalize('NFKD')), 'le menu affiche la version');
   });
   // ───────────── Étape 1 : antisuppression par type, corbeille, admins, moiadmin, anti-raid, fermeture temporaire ─────────────
   const reglagesT = require('../lib/reglages');

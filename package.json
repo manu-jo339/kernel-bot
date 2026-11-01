@@ -1,6 +1,6 @@
 {
   "name": "kernel-bot",
-  "version": "1.0.0",
+  "version": "1.0.7",
   "description": "Kernel Bot — bot WhatsApp multi-appareil en français, par MWENOBANGUE Labs",
   "main": "index.js",
   "private": true,
@@ -9,6 +9,7 @@
     "start": "node supervisor.js",
     "direct": "node index.js",
     "commandes": "node scripts/exporter-commandes.js",
+    "monter": "node scripts/monter-version.js",
     "test": "node tests/essai.js && node tests/moteur.js && node tests/site.js"
   },
   "engines": {

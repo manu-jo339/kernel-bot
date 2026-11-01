@@ -8,15 +8,19 @@ const OUI = ['on', 'oui', 'activer', 'active', '1', 'true'];
 const NON = ['off', 'non', 'desactiver', 'désactiver', 'desactive', '0', 'false'];
 const ACTIONS = { supprimer: 'supprimer le message', avertir: 'supprimer + avertir (exclusion à la limite)', expulser: 'supprimer + exclure' };
 const etat = (b) => (b ? '✅ activé' : '❌ désactivé');
+// Une protection ne peut ni supprimer ni exclure si le bot n'est pas administrateur du groupe : on le dit au lieu de rester silencieux
+const AVIS_PAS_ADMIN = '\n\n⚠️ Je ne suis pas administrateur de ce groupe : la protection est enregistrée, mais elle ne pourra rien faire tant que tu ne m’auras pas nommé administrateur.';
 
 // Fabrique une commande « interrupteur » : .nom on | off | statut [+ options]
-function interrupteur({ name, desc, cle, actions = false, defautAction = 'supprimer', options = {}, aide = '' }) {
+function interrupteur({ name, desc, cle, actions = false, defautAction = 'supprimer', options = {}, aide = '', besoinAdmin = true }) {
   return {
     ...base,
     name,
     desc,
-    run: async ({ jid, args, reply, config }) => {
+    run: async ({ jid, args, reply, config, metadata, botAdmin }) => {
       const p = config.PREFIXE;
+      // Seulement si les infos du groupe ont pu être lues : jamais de fausse alerte
+      const avis = besoinAdmin && metadata && !botAdmin ? AVIS_PAS_ADMIN : '';
       const a = (args[0] || '').toLowerCase();
       const c = groupes.sous(jid, cle);
       const montrer = () =>
@@ -27,12 +31,13 @@ function interrupteur({ name, desc, cle, actions = false, defautAction = 'suppri
             `\n\n${p}${cle} on / off` +
             (actions ? `\n${p}${cle} supprimer | avertir | expulser` : '') +
             Object.entries(options).map(([k, o]) => `\n${p}${cle} ${k} <valeur>`).join('') +
-            (aide ? `\n${aide.replace(/\{P\}/g, p)}` : '')
+            (aide ? `\n${aide.replace(/\{P\}/g, p)}` : '') +
+            (c.actif ? avis : '')
         );
       if (!a || a === 'statut') return montrer();
       if (OUI.includes(a)) {
         groupes.majSous(jid, cle, { actif: true });
-        return reply(`✅ *${cle}* activé.${actions ? ` Sanction : ${c.action || defautAction}.` : ''}`);
+        return reply(`✅ *${cle}* activé.${actions ? ` Sanction : ${c.action || defautAction}.` : ''}${avis}`);
       }
       if (NON.includes(a)) {
         groupes.majSous(jid, cle, { actif: false });
@@ -40,7 +45,7 @@ function interrupteur({ name, desc, cle, actions = false, defautAction = 'suppri
       }
       if (actions && ACTIONS[a]) {
         groupes.majSous(jid, cle, { actif: true, action: a });
-        return reply(`✅ *${cle}* activé — sanction : ${ACTIONS[a]}.`);
+        return reply(`✅ *${cle}* activé — sanction : ${ACTIONS[a]}.${avis}`);
       }
       if (options[a]) {
         const v = parseInt(args[1], 10);
@@ -79,9 +84,17 @@ function messageAccueil({ name, desc, cle, exemple }) {
         groupes.majSous(jid, cle, { actif: false });
         return reply(`❌ *${cle}* désactivé.`);
       }
+      if (a === 'photo' || a === 'image' || a === 'carte') {
+        const v = (args[1] || '').toLowerCase();
+        if (OUI.includes(v) || NON.includes(v)) {
+          groupes.majSous(jid, cle, { photo: OUI.includes(v) });
+          return reply(OUI.includes(v) ? '✅ Carte avec photo activée.' : '✅ Texte seul : plus de carte photo.');
+        }
+        return reply(`✏️ ${p}${cle} photo on / off\nAvec la carte : la photo de profil de la personne (ou un portrait aux couleurs du thème) dans un cadre.`);
+      }
       if (a === 'message') {
         const t = args.slice(1).join(' ').trim();
-        if (!t) return reply(`✏️ Exemple : ${p}${cle} message ${exemple}\n\nVariables : {nom} {groupe} {membres}`);
+        if (!t) return reply(`✏️ Exemple : ${p}${cle} message ${exemple}\n\nVariables : {nom} {groupe} {membres}${cle === 'bienvenue' ? ' {description}' : ''}`);
         groupes.majSous(jid, cle, { message: t });
         return reply('✅ Message enregistré.');
       }
@@ -91,12 +104,13 @@ function messageAccueil({ name, desc, cle, exemple }) {
       }
       if (a === 'test') {
         if (!metadata) return reply('⚠️ Lecture du groupe impossible.');
-        const ev = require('../lib/evenements');
-        const t = (c.message || ev.TEXTES[cle]).replace(/\{nom\}/g, '@' + numero(sender)).replace(/\{groupe\}/g, metadata?.subject || '').replace(/\{membres\}/g, metadata?.participants?.length || '');
-        return sock.sendMessage(jid, { text: t, mentions: [sender] });
+        return require('../lib/accueil').souhaiter(sock, {
+          jid, participants: [sender], nomGroupe: metadata?.subject || '', nb: metadata?.participants?.length || '',
+          description: cle === 'bienvenue' ? metadata?.desc || '' : '', perso: c.message || '', photo: c.photo !== false, mode: cle === 'aurevoir' ? 'aurevoir' : 'bienvenue',
+        });
       }
       return reply(
-        `👋 *${cle}* : ${etat(c.actif)}\nMessage : ${c.message || '(par défaut)'}\n\n${p}${cle} on / off\n${p}${cle} message <texte>\n${p}${cle} test\n${p}${cle} defaut`
+        `👋 *${cle}* : ${etat(c.actif)}\nCarte photo : ${etat(c.photo !== false)}\nMessage : ${c.message || '(par défaut : cadre du thème' + (cle === 'bienvenue' ? ' + description du groupe' : '') + ')'}\n\n${p}${cle} on / off\n${p}${cle} photo on / off\n${p}${cle} message <texte>\n${p}${cle} test\n${p}${cle} defaut`
       );
     },
   };
@@ -169,8 +183,8 @@ module.exports = [
   interrupteur({ name: 'antipromote', cle: 'antipromotion', desc: 'Annule les promotions faites par d’autres que le propriétaire' }),
   interrupteur({ name: 'antidemote', cle: 'antidegradation', desc: 'Annule les rétrogradations faites par d’autres que le propriétaire' }),
   interrupteur({ name: 'antiraid', cle: 'antiraid', desc: 'Ferme le groupe si quelqu’un retire ou nomme trop de monde en une minute', options: { seuil: { libelle: 'Seuil de retraits en 1 minute', defaut: 5 } }, aide: 'Ne compte jamais le bot ni les propriétaires du bot. {P}ouvrir rouvre le groupe.' }),
-  interrupteur({ name: 'promotealert', cle: 'alertepromotion', desc: 'Annonce les nouvelles promotions' }),
-  interrupteur({ name: 'demotealert', cle: 'alertedegradation', desc: 'Annonce les rétrogradations' }),
+  interrupteur({ name: 'promotealert', cle: 'alertepromotion', desc: 'Annonce les nouvelles promotions', besoinAdmin: false }),
+  interrupteur({ name: 'demotealert', cle: 'alertedegradation', desc: 'Annonce les rétrogradations', besoinAdmin: false }),
   messageAccueil({ name: 'welcome', cle: 'bienvenue', desc: 'Message de bienvenue aux nouveaux membres', exemple: 'Bienvenue {nom} dans {groupe} !' }),
   messageAccueil({ name: 'goodbye', cle: 'aurevoir', desc: 'Message quand un membre part', exemple: '{nom} nous a quittés.' }),
 ];

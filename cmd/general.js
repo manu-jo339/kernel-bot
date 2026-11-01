@@ -12,6 +12,27 @@ function vcard(nom, n) {
   return `BEGIN:VCARD\nVERSION:3.0\nFN:${nom}\nTEL;type=CELL;waid=${n}:+${n}\nEND:VCARD`;
 }
 
+// Message du ping : le cadre du thème choisi, la latence, une jauge et une phrase selon la vitesse
+function pingTexte(ms, themeNom, config) {
+  const paliers = [
+    [150, 5, '⚡ Éclair', 'Rapide comme l’éclair !'],
+    [300, 4, '🟢 Très rapide', 'Je réponds sans attendre.'],
+    [600, 3, '🟢 Rapide', 'Tout va bien.'],
+    [1200, 2, '🟡 Correct', 'Un peu de patience parfois, mais ça passe.'],
+    [Infinity, 1, '🔴 Lent', 'Le réseau ou l’hébergeur est chargé : réessaie dans un instant.'],
+  ];
+  const [, barres, etat, phrase] = paliers.find((x) => ms <= x[0]);
+  const th = menu.THEMES[themeNom] || menu.THEMES.kernel;
+  const mo = (n) => Math.round(n / 1048576);
+  const infos = [
+    `Latence : ${ms} ms`,
+    `Vitesse : ${'▰'.repeat(barres)}${'▱'.repeat(5 - barres)} ${etat}`,
+    `En marche : ${formatDuree(process.uptime() * 1000)}`,
+    `Mémoire : ${mo(process.memoryUsage().rss)} Mo`,
+  ];
+  return `${th.entete('🏓 Pong', infos).replace(/\n+$/, '')}\n\n_${phrase}_ — ${config.NOM_BOT}`;
+}
+
 module.exports = [
   {
     ...base,
@@ -90,10 +111,13 @@ module.exports = [
     ...base,
     name: 'ping',
     desc: 'Mesure la vitesse de réponse',
-    run: async ({ sock, jid, msg }) => {
+    run: async (ctx) => {
+      const { sock, jid, msg } = ctx;
+      // La latence est mesurée sur une réaction 🏓 (aller-retour jusqu'au serveur WhatsApp) ; un seul message final, sans « modifié »
       const debut = Date.now();
-      const m = await sock.sendMessage(jid, { text: '🏓 Pong…' }, { quoted: msg });
-      await sock.sendMessage(jid, { text: `🏓 Pong ! ${Date.now() - debut} ms`, edit: m.key });
+      await sock.sendMessage(jid, { react: { text: '🏓', key: msg.key } }).catch(() => {});
+      const ms = Math.max(1, Date.now() - debut);
+      return avecImage(ctx, pingTexte(ms, theme(), ctx.config));
     },
   },
   {

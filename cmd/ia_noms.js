@@ -7,7 +7,7 @@ const store = require('../lib/store');
 const sticker = require('../lib/sticker');
 const media = require('../lib/media');
 const bot = require('../lib/chatbot');
-const { messageCite, extraireTexte, numero } = require('../lib/utils');
+const { messageCite, extraireTexte, numero, pause } = require('../lib/utils');
 const { erreurMedia } = require('../lib/recup');
 
 const P = () => config.PREFIXE;
@@ -76,15 +76,32 @@ module.exports = [
         if (Date.now() - d < 20000) return reply('⏳ Patiente quelques secondes entre deux images.');
         coolImg.set(k, Date.now());
       }
-      try {
-        await reply('🎨 Création de l’image en cours…');
-        const seed = crypto.randomInt(1, 1e9);
-        const f = await web.fichier(`https://image.pollinations.ai/prompt/${encodeURIComponent(q)}?width=1024&height=1024&nologo=true&safe=true&seed=${seed}`, { max: 8 * 1024 * 1024, delai: 90000 });
-        if (!/image\//.test(f.mime)) throw new Error('réponse invalide');
-        await sock.sendMessage(jid, { image: f.buffer, caption: `🎨 ${q.slice(0, 200)}\n_Image générée par IA (Pollinations)._` }, { quoted: msg });
-      } catch {
-        await reply('⚠️ Impossible de créer l’image pour le moment. Réessaie dans un instant ou change la description.');
+      await reply('🎨 Création de l’image en cours…');
+      // Le service gratuit limite chaque adresse (une image à la fois, au moins ~45 s entre deux) et l'hébergeur partage la sienne avec d'autres :
+      // une demande refusée (402 / 429 / 5xx) ou trop lente est donc retentée une fois, avec le motif précis si elle échoue encore.
+      let derniere = null;
+      for (let essai = 1; essai <= 2; essai++) {
+        try {
+          const seed = crypto.randomInt(1, 1e9);
+          const f = await web.fichier(`https://image.pollinations.ai/prompt/${encodeURIComponent(q)}?width=768&height=768&nologo=true&safe=true&seed=${seed}`, { max: 8 * 1024 * 1024, delai: 70000 });
+          if (!/image\//.test(f.mime)) throw new Error('réponse invalide');
+          return void (await sock.sendMessage(jid, { image: f.buffer, caption: `🎨 ${q.slice(0, 200)}\n_Image générée par IA (Pollinations)._` }, { quoted: msg }));
+        } catch (e) {
+          derniere = e;
+          console.error(`[imageia] essai ${essai}/2 : ${e.statut ? 'HTTP ' + e.statut : e.name === 'TimeoutError' ? 'trop long (délai dépassé)' : e.message}`);
+          const reessayable = !e.statut || e.statut === 402 || e.statut === 429 || e.statut >= 500;
+          if (!reessayable || essai === 2) break;
+          await reply('⏳ Le service d’images est chargé, nouvel essai dans quelques secondes…');
+          await pause(process.env.KERNEL_TEST ? 1 : 20000);
+        }
       }
+      const st = derniere?.statut;
+      const motif = st === 402 || st === 429 ? 'le service gratuit Pollinations a atteint sa limite (environ une image toutes les 45 secondes par adresse, partagée avec d’autres utilisateurs)'
+        : st >= 500 ? 'le service Pollinations est en panne ou surchargé'
+        : st ? `le service Pollinations a répondu « HTTP ${st} » (description refusée ?)`
+        : derniere?.name === 'TimeoutError' ? 'le service Pollinations met trop de temps à répondre'
+        : 'le service Pollinations ne répond pas';
+      await reply(`⚠️ Impossible de créer l’image : ${motif}.\nRéessaie dans une minute, ou change la description.`);
     },
   },
 

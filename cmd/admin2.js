@@ -77,25 +77,61 @@ module.exports = [
         const a = attente.get(senderNum);
         if (!a || Date.now() - a.ts > 10 * 60e3) return reply(`❓ Aucune diffusion en attente (ou délai de 10 minutes dépassé). Écris d’abord ${p}diffusion Ton message`);
         attente.delete(senderNum);
-        let groupes;
+        let tous;
         try {
-          groupes = Object.keys(await sock.groupFetchAllParticipating());
+          tous = await sock.groupFetchAllParticipating();
         } catch {
           return reply('⚠️ Impossible de lire la liste des groupes pour le moment.');
         }
-        groupes = groupes.slice(0, MAX_DIFFUSION);
-        await reply(`📤 Envoi à ${groupes.length} groupe(s), avec une pause entre chaque pour protéger ton numéro… (environ ${Math.ceil(groupes.length * 5 / 60)} min)`);
-        let ok = 0, ko = 0;
-        for (const g of groupes) {
-          try {
-            await sock.sendMessage(g, { text: a.texte });
-            ok++;
-          } catch {
-            ko++;
+        // Les groupes où seuls les administrateurs peuvent écrire (et où je n'en suis pas un) refuseraient le message : on les écarte et on les signale
+        const nomDe = (g) => String(tous[g]?.subject || '').trim() || g.split('@')[0];
+        const fermes = [];
+        let groupes = Object.keys(tous).filter((g) => {
+          const m = tous[g];
+          if (m && m.announce && Array.isArray(m.participants) && m.participants.length && !require('../lib/groupes').botEstAdmin(sock, m)) {
+            fermes.push(nomDe(g));
+            return false;
           }
-          await pause(process.env.KERNEL_TEST ? 1 : 3000 + Math.floor(Math.random() * 4000));
+          return true;
+        });
+        groupes = groupes.slice(0, MAX_DIFFUSION);
+        await reply(`📤 Envoi à ${groupes.length} groupe(s), avec une pause entre chaque pour protéger ton numéro… (environ ${Math.ceil(groupes.length * 5 / 60)} min)${fermes.length ? `\n🔒 ${fermes.length} groupe(s) réservé(s) aux admins ignoré(s).` : ''}`);
+        // WhatsApp refuse parfois un message sans que l'envoi lève d'erreur : le refus arrive plus tard dans un accusé. On l'écoute pendant la diffusion.
+        const refus = new Map(); // identifiant du message -> code du refus
+        const ecouteur = (maj) => {
+          for (const u of maj || []) if (u?.update?.status === 0 && u.key?.id) refus.set(u.key.id, (u.update.messageStubParameters || [])[0] || 'refusé');
+        };
+        sock.ev?.on?.('messages.update', ecouteur);
+        const envoyes = []; // { g, id }
+        let ok = 0, ko = 0;
+        const echecs = [];
+        try {
+          for (const g of groupes) {
+            try {
+              const r = await sock.sendMessage(g, { text: a.texte });
+              envoyes.push({ g, id: r?.key?.id });
+            } catch {
+              ko++;
+              echecs.push(nomDe(g));
+            }
+            await pause(process.env.KERNEL_TEST ? 1 : 3000 + Math.floor(Math.random() * 4000));
+          }
+          if (!process.env.KERNEL_TEST) await pause(4000); // laisse arriver l'accusé du dernier envoi
+        } finally {
+          sock.ev?.off?.('messages.update', ecouteur);
         }
-        return reply(`✅ Diffusion terminée : ${ok} envoyé(s)${ko ? `, ${ko} échec(s)` : ''}.`);
+        for (const { g, id } of envoyes) {
+          if (id && refus.has(id)) {
+            ko++;
+            echecs.push(nomDe(g));
+          } else ok++;
+        }
+        const liste = (l) => l.slice(0, 8).join(', ') + (l.length > 8 ? ` … (+${l.length - 8})` : '');
+        return reply(
+          `${ok === groupes.length ? '✅' : '⚠️'} Diffusion terminée : ${ok} envoyé(s) sur ${groupes.length}${ko ? `, ${ko} refusé(s) ou en échec` : ''}.` +
+            (echecs.length ? `\n❌ Refusé(s) : ${liste(echecs)}` : '') +
+            (fermes.length ? `\n🔒 Ignoré(s), réservé(s) aux admins : ${liste(fermes)}` : '')
+        );
       }
       if (sous === 'annuler') {
         attente.delete(senderNum);

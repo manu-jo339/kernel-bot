@@ -75,7 +75,10 @@ module.exports = [
           await bot.envoyerAvis(ctx.sock, ctx.jid, ctx.msg, true);
           return;
         }
-        return reply('✅ Chatbot activé. Écris-moi simplement ton message !');
+        // Le bot est branché sur ton compte : il répond aux messages des AUTRES. Pour lui parler toi-même, il faut écrire dans « Moi-même ».
+        const moi = [ctx.sock.user?.id, ctx.sock.user?.lid].filter(Boolean).map((x) => bot.numero(x));
+        if (moi.includes(bot.numero(ctx.jid))) return reply('✅ Chatbot activé dans cette discussion : écris-moi simplement ton message !');
+        return reply('✅ Chatbot activé dans cette discussion : je répondrai aux messages de la personne qui t’écrit ici.\n_Tes propres messages ne déclenchent rien (le bot est branché sur ton compte). Pour lui parler toi-même, tape ' + P + 'chatbot on dans ta discussion « Moi-même », puis écris-lui là._');
       }
 
       // ----- Statut -----
