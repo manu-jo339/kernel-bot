@@ -954,11 +954,32 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
     const secondaire = Object.assign(Object.create(sock), { secondaire: true, user: { id: '242097000000:3@s.whatsapp.net' } });
     assert(REFUS.test(texteDe(await depuis(secondaire, '242097000000@s.whatsapp.net', '.redemarrer'))), 'moteur partagé : le titulaire n’a pas les commandes du serveur');
   });
-  await test('niveaux : passage de niveau', async () => {
+  await test('niveaux : désactivés par défaut ; « niveau on » (admin du groupe) les active pour CE groupe seulement ; rang, classement et profil l’expliquent', async () => {
     const niv = require('../lib/niveaux');
+    const groupesLib = require('../lib/groupes');
     require('../lib/store').set('xp', GRP + '|242063333333', { xp: 49, msgs: 1, dernier: 0 });
-    const r = texteDe(await dire(MEMBRE, 'bonjour tout le monde'));
+    // 1) par défaut : aucun message de niveau, aucune expérience comptée
+    let r = texteDe(await dire(MEMBRE, 'bonjour tout le monde'));
+    assert(!/niveau/i.test(r) && niv.lire(GRP, MEMBRE).xp === 49, 'désactivé par défaut : ' + r);
+    for (const c of ['.rang', '.classement', '.profil']) assert(/niveaux sont désactivés/.test(texteDe(await dire(MEMBRE, c))), c + ' doit expliquer que les niveaux sont désactivés');
+    // 2) un simple membre ne peut pas les activer ; le réglage ne bouge pas
+    assert(/administrateurs/.test(texteDe(await dire(MEMBRE, '.niveau on'))), 'réservé aux admins du groupe');
+    assert(!groupesLib.sous(GRP, 'niveaux').actif, 'rien activé par un membre');
+    // 3) un admin du groupe les active : l'expérience compte et le passage de niveau s'annonce
+    assert(/activé/.test(texteDe(await dire(ADMIN, '.niveau on'))));
+    r = texteDe(await dire(MEMBRE, 'bonjour tout le monde'));
     assert(/niveau 1|niveau 2/.test(r) || niv.lire(GRP, MEMBRE).xp > 49, r);
+    assert(!/niveaux sont désactivés/.test(texteDe(await dire(MEMBRE, '.rang'))), 'rang répond quand c’est activé');
+    // 4) propre à chaque groupe
+    assert(!groupesLib.sous('120363999999999999@g.us', 'niveaux').actif, 'un autre groupe reste désactivé');
+    // 5) « off » : plus d'expérience comptée
+    assert(/désactivé/.test(texteDe(await dire(ADMIN, '.niveau off'))));
+    const avant = niv.lire(GRP, MEMBRE).xp;
+    require('../lib/store').set('xp', GRP + '|242063333333', { ...require('../lib/store').get('xp', GRP + '|242063333333'), dernier: 0 });
+    await dire(MEMBRE, 'encore un message');
+    assert.strictEqual(niv.lire(GRP, MEMBRE).xp, avant, 'plus d’expérience comptée quand c’est coupé');
+    // 6) la commande se règle dans un groupe, pas en privé
+    assert(/groupe/i.test(texteDe(await dire(PROP, '.niveau on', false))), 'en privé : réservé aux groupes');
   });
   await test('antisuppression garde le message', async () => {
     await dire(PROP, '.antisuppression ici');
@@ -1967,7 +1988,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(require('../cmd/systeme').plusRecent('1.10.0', '1.9.9') && !require('../cmd/systeme').plusRecent('1.0.0', '1.0.0'));
     routes.length = 0;
   });
-  await test('numéro de version : 1.0.9 ; la montée ajoute 1 au dernier chiffre, avec retenue à 10 (1.0.9 → 1.1.0)', async () => {
+  await test('numéro de version : 1.1.0 ; la montée ajoute 1 au dernier chiffre, avec retenue à 10 (1.0.9 → 1.1.0)', async () => {
     const { suivante } = require('../scripts/monter-version');
     const v = require('../package.json').version;
     assert(/^\d+\.\d\.\d$/.test(v), 'version de la forme x.y.z : ' + v);

@@ -166,7 +166,6 @@ module.exports = [
   })),
 
   // ───────────── Automatismes (réglages globaux) ─────────────
-  global({ name: 'niveau', cle: 'niveau', desc: 'Messages de passage de niveau', aide: 'Les membres gagnent de l’expérience en discutant dans les groupes.' }),
   global({
     name: 'antiappel', cle: 'antiappel', desc: 'Rejette automatiquement les appels', aide: '{P}antiappel message <texte> — change la réponse envoyée',
     extra: async ({ args, reply }, a) => {

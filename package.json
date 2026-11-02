@@ -1,6 +1,6 @@
 {
   "name": "kernel-bot",
-  "version": "1.0.9",
+  "version": "1.1.0",
   "description": "Kernel Bot — bot WhatsApp multi-appareil en français, par MWENOBANGUE Labs",
   "main": "index.js",
   "private": true,
