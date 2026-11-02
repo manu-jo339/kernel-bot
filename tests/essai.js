@@ -163,6 +163,36 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert.strictEqual(statuts.jidProprietaire({ secondaire: true, user: { id: '242099999999:3@s.whatsapp.net' } }), '242099999999@s.whatsapp.net');
     } finally { config.OWNERS.splice(0, config.OWNERS.length, ...avant); }
   });
+  await test('copies privées : le bot retient l’adresse réelle (@lid) de la discussion du propriétaire, même après un redémarrage', () => {
+    const statuts = require('../lib/statuts');
+    const store = require('../lib/store');
+    const config = require('../config');
+    const avant = config.OWNERS.slice();
+    config.OWNERS.splice(0, config.OWNERS.length, '242061111111');
+    try {
+      const user = { id: '242061111111:3@s.whatsapp.net', lid: '98765432101234:3@lid' };
+      const s = { user };
+      assert.strictEqual(statuts.jidProprietaire(s), '242061111111@s.whatsapp.net', 'rien appris : numéro classique');
+      statuts.apprendreDiscussion(s, { key: { remoteJid: '55555555555@lid' } }); // une autre personne : ignorée
+      statuts.apprendreDiscussion(s, { key: { remoteJid: '242077777777@s.whatsapp.net' } });
+      statuts.apprendreDiscussion(s, { key: { remoteJid: '120363000000000000@g.us' } });
+      assert.strictEqual(statuts.jidProprietaire(s), '242061111111@s.whatsapp.net', 'les autres discussions ne comptent pas');
+      statuts.apprendreDiscussion(s, { key: { remoteJid: '98765432101234@lid', fromMe: true } }); // « Moi-même » sous identifiant masqué
+      assert.strictEqual(statuts.jidProprietaire(s), '98765432101234@lid');
+      assert.strictEqual(statuts.jidProprietaire({ user }), '98765432101234@lid', 'retenue après un redémarrage');
+      config.OWNERS.splice(0, config.OWNERS.length, '242070000000'); // le propriétaire change : ancienne adresse écartée
+      assert.strictEqual(statuts.jidProprietaire({ user }), '242070000000@s.whatsapp.net');
+      // propriétaire différent du numéro connecté : sa discussion arrive en @lid avec son numéro en « remoteJidAlt »
+      config.OWNERS.splice(0, config.OWNERS.length, '242061111111');
+      const autre = { user: { id: '242099999999:3@s.whatsapp.net' } };
+      statuts.apprendreDiscussion(autre, { key: { remoteJid: '77777777777@lid', remoteJidAlt: '242061111111@s.whatsapp.net' } });
+      assert.strictEqual(statuts.jidProprietaire(autre), '77777777777@lid');
+    } finally {
+      config.OWNERS.splice(0, config.OWNERS.length, ...avant);
+      store.del('proprio', '242061111111');
+      store.del('proprio', '242099999999');
+    }
+  });
   await test('menu accueil et catégorie', async () => {
     const rep = await dire(MEMBRE, '.menu');
     const im0 = rep.find((x) => x.c.image);
@@ -1937,7 +1967,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(require('../cmd/systeme').plusRecent('1.10.0', '1.9.9') && !require('../cmd/systeme').plusRecent('1.0.0', '1.0.0'));
     routes.length = 0;
   });
-  await test('numéro de version : 1.0.8 ; la montée ajoute 1 au dernier chiffre, avec retenue à 10 (1.0.9 → 1.1.0)', async () => {
+  await test('numéro de version : 1.0.9 ; la montée ajoute 1 au dernier chiffre, avec retenue à 10 (1.0.9 → 1.1.0)', async () => {
     const { suivante } = require('../scripts/monter-version');
     const v = require('../package.json').version;
     assert(/^\d+\.\d\.\d$/.test(v), 'version de la forme x.y.z : ' + v);
