@@ -446,6 +446,44 @@ module.exports = [
     },
   },
   {
+    categorie: 'Groupe',
+    name: 'ephemere',
+    aliases: ['ephemeral', 'messageseph', 'disappear'],
+    desc: 'Messages éphémères d’un groupe ou d’une discussion — .ephemere 24h | 7j | 90j | off',
+    metaSiGroupe: true,
+    run: async ({ sock, jid, args, reply, config, isGroup, isOwner, isAdmin, botAdmin, metadata }) => {
+      const p = config.PREFIXE;
+      // Groupe : un admin du groupe (le bot doit l'être aussi, WhatsApp peut réserver ce réglage aux admins). Discussion privée : seulement le propriétaire du bot.
+      if (isGroup) {
+        if (!(isAdmin || isOwner)) return reply(config.PERSO.messages.reserveAdmin);
+        if (!botAdmin) return reply('🤖 Je dois être administrateur du groupe pour faire cela.');
+      } else if (!isOwner) return reply('🔒 Dans une discussion privée, seul le propriétaire du bot peut régler les messages éphémères.');
+      const saisie = args.join('').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const DUREES = [
+        [/^(24h|24|24heures?|1j|1d|1jour)$/, 86400, '24 heures'],
+        [/^(7j|7d|7|7jours?|semaine|1semaine)$/, 604800, '7 jours'],
+        [/^(90j|90d|90|90jours?|3mois)$/, 7776000, '90 jours'],
+      ];
+      const libelle = (s) => (DUREES.find((d) => d[1] === s) || [])[2] || `${s} secondes`;
+      const aide = `⏳ *Messages éphémères*\n${p}ephemere 24h\n${p}ephemere 7j\n${p}ephemere 90j\n${p}ephemere off\n_WhatsApp n’accepte que ces trois durées._`;
+      if (!saisie) {
+        const actuel = isGroup ? Number(metadata?.ephemeralDuration || 0) : null;
+        const etat = actuel === null ? 'WhatsApp ne me dit pas l’état d’une discussion privée.' : actuel ? `Activés : les messages disparaissent après ${libelle(actuel)}.` : 'Désactivés.';
+        return reply(`${etat}\n\n${aide}`);
+      }
+      const off = /^(off|non|0|desactiver|desactive|arreter|stop)$/.test(saisie);
+      const duree = off ? null : DUREES.find((d) => d[0].test(saisie));
+      if (!off && !duree) return reply(`❓ Je n’ai pas compris la durée.\n\n${aide}`);
+      const secondes = off ? 0 : duree[1];
+      try {
+        await sock.sendMessage(jid, { disappearingMessagesInChat: secondes });
+      } catch (e) {
+        return reply(`⚠️ WhatsApp a refusé le changement${e?.message ? ` (${String(e.message).slice(0, 80)})` : ''}.`);
+      }
+      return reply(off ? '✅ Messages éphémères désactivés.' : `✅ Messages éphémères activés : les nouveaux messages disparaîtront après ${duree[2]}. Les anciens restent.`);
+    },
+  },
+  {
     ...base,
     name: 'lock',
     desc: 'Seuls les admins modifient les infos du groupe',

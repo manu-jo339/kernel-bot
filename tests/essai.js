@@ -1253,6 +1253,57 @@ const test = async (nom, fn) => { try { await fn(); ok++; console.log('  ✔', n
       assert(ecouteurs.size === 0, 'écouteur retiré à la fin');
     } finally { sock.groupFetchAllParticipating = anciens.fetch; sock.sendMessage = anciens.envoi; sock.ev = anciens.ev; if (!anciens.ev) delete sock.ev; }
   });
+  await test('diffusion : filtre par nom de groupe (sans accents ni majuscules, « sauf »), lots, 2 h entre deux lots, « suite », rien envoyé deux fois', async () => {
+    const noms = { A: 'Famille Tsingambia', B: 'Église Évangélique', C: 'FAMILLE élargie', D: 'Test famille', E: 'Collègues', F: 'Famille proche' };
+    const ids = Object.fromEntries(Object.keys(noms).map((k, i) => [k, `12036300000000${100 + i}@g.us`]));
+    const ancienFetch = sock.groupFetchAllParticipating;
+    const ancienLot = process.env.DIFFUSION_LOT;
+    const dbb = require('../lib/db');
+    sock.groupFetchAllParticipating = async () => Object.fromEntries(Object.keys(noms).map((k) => [ids[k], { id: ids[k], subject: noms[k], participants: [{ id: BOT, admin: 'admin' }] }]));
+    process.env.DIFFUSION_LOT = '2';
+    const recus = (r) => r.filter((x) => /Joyeuses fêtes/.test(x.c.text || '') && Object.values(ids).includes(x.jid)).map((x) => x.jid).sort();
+    try {
+      dbb.ecrire('diffusion:suivi', '');
+      assert(/Aucune diffusion en cours/.test(texteDe(await dire(PROP, '.diffusion suite', false))), 'suite sans rien en cours');
+      assert(/Aucun groupe/.test(texteDe(await dire(PROP, '.diffusion groupes:zzz Joyeuses fêtes', false))), 'aucun groupe ne correspond');
+      // Aperçu : « famille » trouve Famille / FAMILLE, « sauf:test » retire « Test famille », ni Église ni Collègues
+      const ap = texteDe(await dire(PROP, '.diffusion groupes:famille sauf:test Joyeuses fêtes', false));
+      assert(/Aperçu/.test(ap) && /\*3\* à servir/.test(ap) && /Famille Tsingambia/.test(ap) && !/Église|Collègues|Test famille/.test(ap), ap);
+      // Lot 1 : 2 groupes sur 3
+      let r = await dire(PROP, '.diffusion oui', false);
+      let fin = texteDe(r.filter((x) => /Diffusion terminée/.test(x.c.text || '')));
+      assert(/2 envoyé\(s\) sur 2/.test(fin) && /Il reste 1 groupe/.test(fin), fin);
+      assert.deepStrictEqual(recus(r), [ids.A, ids.C].sort(), 'lot 1 : A et C seulement');
+      // « suite » : reprise annoncée ; mais 2 h minimum entre deux lots
+      assert(/Reprise\* : 2 groupe/.test(texteDe(await dire(PROP, '.diffusion suite', false))));
+      r = await dire(PROP, '.diffusion oui', false);
+      assert(/attends encore/.test(texteDe(r)) && recus(r).length === 0, texteDe(r));
+      // Passer outre : lot 2 = le dernier groupe, jamais un groupe déjà servi
+      r = await dire(PROP, '.diffusion oui maintenant', false);
+      fin = texteDe(r.filter((x) => /Diffusion terminée/.test(x.c.text || '')));
+      assert(/1 envoyé\(s\) sur 1/.test(fin) && /Terminé/.test(fin), fin);
+      assert.deepStrictEqual(recus(r), [ids.F], 'lot 2 : F seulement');
+      assert(!dbb.lire('diffusion:suivi'), 'avancement effacé à la fin');
+      assert(/Aucune diffusion/.test(texteDe(await dire(PROP, '.diffusion oui', false))));
+      // « oublier » remet à zéro un avancement en cours ; après 2 h le lot suivant part sans option
+      await dire(PROP, '.diffusion groupes:famille Joyeuses fêtes', false);
+      await dire(PROP, '.diffusion oui', false);
+      assert(dbb.lire('diffusion:suivi'), 'avancement gardé');
+      const s = JSON.parse(dbb.lire('diffusion:suivi'));
+      s.dernier = Date.now() - 3 * 3600e3;
+      dbb.ecrire('diffusion:suivi', JSON.stringify(s));
+      await dire(PROP, '.diffusion suite', false);
+      r = await dire(PROP, '.diffusion oui', false);
+      assert(/Diffusion terminée/.test(texteDe(r)) && recus(r).length > 0, 'après 2 h : le lot suivant part');
+      await dire(PROP, '.diffusion groupes:famille Joyeuses fêtes', false);
+      await dire(PROP, '.diffusion oui', false);
+      assert(/Avancement effacé/.test(texteDe(await dire(PROP, '.diffusion oublier', false))) && !dbb.lire('diffusion:suivi'));
+    } finally {
+      sock.groupFetchAllParticipating = ancienFetch;
+      if (ancienLot === undefined) delete process.env.DIFFUSION_LOT; else process.env.DIFFUSION_LOT = ancienLot;
+      dbb.ecrire('diffusion:suivi', '');
+    }
+  });
   await test('rapport et rapport automatique', async () => {
     assert(/Rapport d’activité/.test(texteDe(await dire(PROP, '.rapport'))));
     await dire(PROP, '.rapport auto on');
@@ -1886,7 +1937,7 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert(require('../cmd/systeme').plusRecent('1.10.0', '1.9.9') && !require('../cmd/systeme').plusRecent('1.0.0', '1.0.0'));
     routes.length = 0;
   });
-  await test('numéro de version : 1.0.7 ; la montée ajoute 1 au dernier chiffre, avec retenue à 10 (1.0.9 → 1.1.0)', async () => {
+  await test('numéro de version : 1.0.8 ; la montée ajoute 1 au dernier chiffre, avec retenue à 10 (1.0.9 → 1.1.0)', async () => {
     const { suivante } = require('../scripts/monter-version');
     const v = require('../package.json').version;
     assert(/^\d+\.\d\.\d$/.test(v), 'version de la forme x.y.z : ' + v);
@@ -2184,6 +2235,27 @@ echo "T:Titre de test"; echo "D:125"; echo "F:$f"
     assert.deepStrictEqual(reglagesGroupe, ['announcement'], 'trois promotions d’un coup : groupe fermé');
   });
 
+  await test('ephemere : durées 24h / 7j / 90j / off dans un groupe (admin) et en privé (propriétaire) ; refus pour les autres', async () => {
+    nouveauGroupe([{ id: BOT, admin: 'admin' }, { id: ADMIN, admin: 'admin' }, { id: M1 }]);
+    const regle = (r) => r.filter((x) => x.c && x.c.disappearingMessagesInChat !== undefined).map((x) => x.c.disappearingMessagesInChat);
+    assert.deepStrictEqual(regle(await dire(ADMIN, '.ephemere 24h')), [86400]);
+    assert.deepStrictEqual(regle(await dire(ADMIN, '.ephemere 7 jours')), [604800]);
+    assert.deepStrictEqual(regle(await dire(ADMIN, '.ephemere 90j')), [7776000]);
+    let r = await dire(ADMIN, '.ephemere off');
+    assert.deepStrictEqual(regle(r), [0]);
+    assert(/désactivés/.test(texteDe(r)), texteDe(r));
+    r = await dire(ADMIN, '.ephemere 5j');
+    assert(/pas compris/.test(texteDe(r)) && regle(r).length === 0, 'durée inconnue : rien n’est envoyé');
+    assert(/Désactivés/.test(texteDe(await dire(ADMIN, '.ephemere'))), 'état affiché');
+    assert(/réservée aux administrateurs/.test(texteDe(await dire(M1, '.ephemere 7j'))), 'un simple membre est refusé');
+    // le bot doit être admin du groupe
+    nouveauGroupe([{ id: BOT }, { id: ADMIN, admin: 'admin' }]);
+    r = await dire(ADMIN, '.ephemere 7j');
+    assert(/administrateur/.test(texteDe(r)) && regle(r).length === 0, texteDe(r));
+    // discussion privée : le propriétaire seulement
+    assert.deepStrictEqual(regle(await dire(PROP, '.ephemere 24h', false)), [86400]);
+    assert(/propriétaire du bot/.test(texteDe(await dire(MEMBRE, '.ephemere 24h', false))));
+  });
   await test('fermer 2h : fermeture temporaire, réouverture automatique ; ouvrir l’annule', async () => {
     nouveauGroupe([{ id: BOT, admin: 'admin' }, { id: ADMIN, admin: 'admin' }, { id: M1 }]);
     jobsT.supprimerCle('rouvrir:' + GRP);

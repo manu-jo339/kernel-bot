@@ -16,7 +16,58 @@ const proprio = { ownerOnly: true, strict: true };
 
 // ───────────── Diffusion : un message à tous les groupes (avec confirmation et pauses, pour ne pas faire bannir le numéro) ─────────────
 const attente = new Map(); // numéro propriétaire -> { texte, ts }
-const MAX_DIFFUSION = 50;
+// Par lots : au plus 50 groupes à la fois (DIFFUSION_LOT pour changer), au moins 2 h entre deux lots, avancement gardé en mémoire
+const MAX_LOT_DEFAUT = 50;
+const maxLot = () => Math.max(1, parseInt(process.env.DIFFUSION_LOT || '', 10) || MAX_LOT_DEFAUT);
+const PAUSE_LOTS = 2 * 3600e3;
+const VALIDITE_SUIVI = 7 * 86400e3;
+const CLE_SUIVI = 'diffusion:suivi';
+const sansAccent = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const mots = (v) => String(v || '').split(',').map((x) => sansAccent(x).trim()).filter(Boolean);
+const nomGroupe = (m, g) => String(m?.subject || '').trim() || g.split('@')[0];
+// « 🙂diffusion groupes:famille,eglise sauf:test Texte » : filtre facultatif devant le texte (mots cherchés dans le nom du groupe, sans accents ni majuscules)
+function analyserDiffusion(args) {
+  const inclure = [], exclure = [];
+  let i = 0;
+  while (i < args.length) {
+    const m = /^(groupes?|filtre|pour|sauf):(.*)$/i.exec(args[i]);
+    if (!m) break;
+    let v = m[2];
+    i++;
+    if (!v && i < args.length) v = args[i++];
+    (m[1].toLowerCase() === 'sauf' ? exclure : inclure).push(...mots(v));
+  }
+  return { texte: args.slice(i).join(' ').trim().slice(0, 3000), inclure, exclure };
+}
+const correspond = (nom, d) => {
+  const n = sansAccent(nom);
+  return (!d.inclure.length || d.inclure.some((w) => n.includes(w))) && !d.exclure.some((w) => n.includes(w));
+};
+const cleDiffusion = (d) => JSON.stringify([d.texte, d.inclure, d.exclure]);
+const libelleFiltre = (d) => [
+  d.inclure.length ? `contient « ${d.inclure.join(' » ou « ')} »` : '',
+  d.exclure.length ? `ne contient pas « ${d.exclure.join(' » ni « ')} »` : '',
+].filter(Boolean).join(' et ');
+// { cle, texte, inclure, exclure, faits: [groupes déjà servis], dernier: heure du dernier lot } — gardé dans la base, donc après un redémarrage aussi
+function suiviActuel() {
+  try {
+    const s = JSON.parse(db.lire(CLE_SUIVI) || 'null');
+    if (s && typeof s.cle === 'string' && typeof s.texte === 'string' && Array.isArray(s.faits) && s.faits.length && Date.now() - s.dernier < VALIDITE_SUIVI) return s;
+  } catch {}
+  return null;
+}
+const suiviPour = (d) => {
+  const s = suiviActuel();
+  return s && s.cle === cleDiffusion(d) ? s : { cle: cleDiffusion(d), texte: d.texte, inclure: d.inclure, exclure: d.exclure, faits: [], dernier: 0 };
+};
+const ecrireSuivi = (s) => db.ecrire(CLE_SUIVI, s ? JSON.stringify(s) : '');
+const apercuDiffusion = (p, d, suivi, noms) => {
+  const liste = noms ? noms.slice(0, 10).join(', ') + (noms.length > 10 ? ` … (+${noms.length - 10})` : '') : '';
+  return `📢 *Aperçu de la diffusion :*\n\n${d.texte}\n\n———\n` +
+    (libelleFiltre(d) ? `🎯 Groupes dont le nom ${libelleFiltre(d)}${noms ? ` : *${noms.length}* à servir\n${liste}` : ''}\n` : '') +
+    (suivi.faits.length ? `↩️ *Reprise* : ${suivi.faits.length} groupe(s) ont déjà reçu ce message, ils seront sautés.\n` : '') +
+    `Confirme avec *${p}diffusion oui* (ou ${p}diffusion annuler).`;
+};
 
 // ───────────── Rapport d'activité ─────────────
 async function construireRapport(sock, jours = 7) {
@@ -75,7 +126,12 @@ module.exports = [
       const sous = (args[0] || '').toLowerCase();
       if (sous === 'oui') {
         const a = attente.get(senderNum);
-        if (!a || Date.now() - a.ts > 10 * 60e3) return reply(`❓ Aucune diffusion en attente (ou délai de 10 minutes dépassé). Écris d’abord ${p}diffusion Ton message`);
+        if (!a || Date.now() - a.ts > 10 * 60e3) return reply(`❓ Aucune diffusion en attente (ou délai de 10 minutes dépassé). Écris d’abord ${p}diffusion Ton message (ou ${p}diffusion suite pour continuer une diffusion commencée)`);
+        const suivi = suiviPour(a);
+        const ecoule = Date.now() - suivi.dernier;
+        // Entre deux lots : au moins 2 h, pour protéger le numéro
+        if (suivi.faits.length && ecoule < PAUSE_LOTS && (args[1] || '').toLowerCase() !== 'maintenant')
+          return reply(`⏳ Le dernier lot est parti il y a ${formatDuree(ecoule)}. Pour protéger ton numéro, attends encore ${formatDuree(PAUSE_LOTS - ecoule)} (au moins 2 h entre deux lots).\nQuand tu seras prêt : ${p}diffusion suite, puis ${p}diffusion oui.\n_Pour passer outre, à tes risques : ${p}diffusion oui maintenant_`);
         attente.delete(senderNum);
         let tous;
         try {
@@ -84,18 +140,30 @@ module.exports = [
           return reply('⚠️ Impossible de lire la liste des groupes pour le moment.');
         }
         // Les groupes où seuls les administrateurs peuvent écrire (et où je n'en suis pas un) refuseraient le message : on les écarte et on les signale
-        const nomDe = (g) => String(tous[g]?.subject || '').trim() || g.split('@')[0];
+        const nomDe = (g) => nomGroupe(tous[g], g);
         const fermes = [];
-        let groupes = Object.keys(tous).filter((g) => {
-          const m = tous[g];
-          if (m && m.announce && Array.isArray(m.participants) && m.participants.length && !require('../lib/groupes').botEstAdmin(sock, m)) {
-            fermes.push(nomDe(g));
-            return false;
+        const dejaFaits = new Set(suivi.faits);
+        const candidats = Object.keys(tous)
+          .filter((g) => !dejaFaits.has(g) && correspond(nomDe(g), a))
+          .filter((g) => {
+            const m = tous[g];
+            if (m && m.announce && Array.isArray(m.participants) && m.participants.length && !require('../lib/groupes').botEstAdmin(sock, m)) {
+              fermes.push(nomDe(g));
+              return false;
+            }
+            return true;
+          });
+        const lot = candidats.slice(0, maxLot());
+        const reste = candidats.length - lot.length;
+        const liste = (l) => l.slice(0, 8).join(', ') + (l.length > 8 ? ` … (+${l.length - 8})` : '');
+        if (!lot.length) {
+          if (suivi.faits.length && !fermes.length) {
+            ecrireSuivi(null);
+            return reply('🏁 Tous les groupes ont déjà reçu ce message : rien d’autre à envoyer.');
           }
-          return true;
-        });
-        groupes = groupes.slice(0, MAX_DIFFUSION);
-        await reply(`📤 Envoi à ${groupes.length} groupe(s), avec une pause entre chaque pour protéger ton numéro… (environ ${Math.ceil(groupes.length * 5 / 60)} min)${fermes.length ? `\n🔒 ${fermes.length} groupe(s) réservé(s) aux admins ignoré(s).` : ''}`);
+          return reply(`❓ Aucun groupe à servir${libelleFiltre(a) ? ` (nom qui ${libelleFiltre(a)})` : ''}.` + (fermes.length ? `\n🔒 Ignoré(s), réservé(s) aux admins : ${liste(fermes)}` : ''));
+        }
+        await reply(`📤 Envoi à ${lot.length} groupe(s)${reste ? ` sur ${candidats.length}` : ''}, avec une pause entre chaque pour protéger ton numéro… (environ ${Math.ceil(lot.length * 5 / 60)} min)${fermes.length ? `\n🔒 ${fermes.length} groupe(s) réservé(s) aux admins ignoré(s).` : ''}`);
         // WhatsApp refuse parfois un message sans que l'envoi lève d'erreur : le refus arrive plus tard dans un accusé. On l'écoute pendant la diffusion.
         const refus = new Map(); // identifiant du message -> code du refus
         const ecouteur = (maj) => {
@@ -106,7 +174,7 @@ module.exports = [
         let ok = 0, ko = 0;
         const echecs = [];
         try {
-          for (const g of groupes) {
+          for (const g of lot) {
             try {
               const r = await sock.sendMessage(g, { text: a.texte });
               envoyes.push({ g, id: r?.key?.id });
@@ -126,21 +194,55 @@ module.exports = [
             echecs.push(nomDe(g));
           } else ok++;
         }
-        const liste = (l) => l.slice(0, 8).join(', ') + (l.length > 8 ? ` … (+${l.length - 8})` : '');
+        // Avancement : les groupes servis (même refusés par WhatsApp) ne sont plus retentés ; ceux où l'envoi a planté le seront au lot suivant
+        const etaitReprise = suivi.faits.length > 0;
+        const restant = reste + (lot.length - envoyes.length);
+        ecrireSuivi(restant > 0 ? { cle: cleDiffusion(a), texte: a.texte, inclure: a.inclure, exclure: a.exclure, faits: [...suivi.faits, ...envoyes.map((e) => e.g)], dernier: Date.now() } : null);
         return reply(
-          `${ok === groupes.length ? '✅' : '⚠️'} Diffusion terminée : ${ok} envoyé(s) sur ${groupes.length}${ko ? `, ${ko} refusé(s) ou en échec` : ''}.` +
+          `${ok === lot.length ? '✅' : '⚠️'} Diffusion terminée : ${ok} envoyé(s) sur ${lot.length}${ko ? `, ${ko} refusé(s) ou en échec` : ''}.` +
             (echecs.length ? `\n❌ Refusé(s) : ${liste(echecs)}` : '') +
-            (fermes.length ? `\n🔒 Ignoré(s), réservé(s) aux admins : ${liste(fermes)}` : '')
+            (fermes.length ? `\n🔒 Ignoré(s), réservé(s) aux admins : ${liste(fermes)}` : '') +
+            (restant > 0
+              ? `\n📦 Il reste ${restant} groupe(s) à servir. Attends 2 à 4 h, puis : ${p}diffusion suite, et ${p}diffusion oui.`
+              : etaitReprise ? '\n🏁 Terminé : tous les groupes ont reçu le message.' : '')
         );
       }
       if (sous === 'annuler') {
         attente.delete(senderNum);
         return reply('🗑️ Diffusion annulée.');
       }
-      const texte = args.join(' ').trim();
-      if (texte.length < 3) return reply(`📢 *Diffusion*\n${p}diffusion Ton message\nPuis ${p}diffusion oui pour envoyer (ou ${p}diffusion annuler).\n_Limité à ${MAX_DIFFUSION} groupes par envoi, avec pauses._`);
-      attente.set(senderNum, { texte: texte.slice(0, 3000), ts: Date.now() });
-      await reply(`📢 *Aperçu de la diffusion :*\n\n${texte.slice(0, 3000)}\n\n———\nConfirme avec *${p}diffusion oui* (ou ${p}diffusion annuler).`);
+      if (args.length === 1 && sous === 'oublier') {
+        attente.delete(senderNum);
+        ecrireSuivi(null);
+        return reply('🗑️ Avancement effacé : la prochaine diffusion repart de zéro.');
+      }
+      if (args.length === 1 && sous === 'suite') {
+        const s = suiviActuel();
+        if (!s) return reply(`❓ Aucune diffusion en cours. Écris ${p}diffusion Ton message pour en commencer une.`);
+        const d = { texte: s.texte, inclure: s.inclure || [], exclure: s.exclure || [] };
+        attente.set(senderNum, { ...d, ts: Date.now() });
+        return reply(apercuDiffusion(p, d, s, null));
+      }
+      const d = analyserDiffusion(args);
+      if (d.texte.length < 3)
+        return reply(
+          `📢 *Diffusion*\n${p}diffusion Ton message\n${p}diffusion groupes:famille Ton message _(seulement les groupes dont le nom contient « famille »)_\n${p}diffusion groupes:famille,eglise sauf:test Ton message\n` +
+            `Puis ${p}diffusion oui pour envoyer (ou ${p}diffusion annuler).\n_Par lots de ${maxLot()} groupes au plus, avec pauses, et 2 h minimum entre deux lots : ${p}diffusion suite pour la suite, ${p}diffusion oublier pour tout remettre à zéro._`
+        );
+      let noms = null;
+      if (d.inclure.length || d.exclure.length) {
+        let tous;
+        try {
+          tous = await sock.groupFetchAllParticipating();
+        } catch {
+          return reply('⚠️ Impossible de lire la liste des groupes pour le moment.');
+        }
+        const deja = new Set(suiviPour(d).faits);
+        noms = Object.keys(tous).filter((g) => !deja.has(g) && correspond(nomGroupe(tous[g], g), d)).map((g) => nomGroupe(tous[g], g));
+        if (!noms.length) return reply(`❓ Aucun groupe à servir dont le nom ${libelleFiltre(d)}.`);
+      }
+      attente.set(senderNum, { ...d, ts: Date.now() });
+      await reply(apercuDiffusion(p, d, suiviPour(d), noms));
     },
   },
   {
